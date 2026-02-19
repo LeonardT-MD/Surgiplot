@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "surgiplot"
+version = "0.1.0"
+description = "Surgiplot: anatomical measurement toolkit (AoA, SF, VoA, VOM, sVOM, AoE)"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name="Surgiplot Contributors"}]
+dependencies = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "scikit-learn>=1.2",
+  "pyside6>=6.5",
+  "typer>=0.12",
+  "rich>=13.7",
+]
+
+[project.scripts]
+surgiplot = "surgiplot.cli.app:main"
+surgiplot_gui = "surgiplot.gui.app:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
