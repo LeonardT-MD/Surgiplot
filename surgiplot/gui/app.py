@@ -237,6 +237,82 @@ class MetricWindow(QtWidgets.QWidget):
                 self.out.setPlainText(f"AoE (deg): {res.aoe_deg:.3f}\n\nDebug:\n{res.debug}")
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", str(e))
+        def _current_metric_snippet(self) -> str:
+        m = self.metric.currentText()
+        src = self.ds.meta.get("source", "")
+
+        header = (
+            "from surgiplot import load_dataset\n"
+            "from surgiplot.metrics import VOM_VOA, AOA_SF, AOE\n\n"
+            f"# Source of data: {src}\n"
+        )
+
+        # if loaded from file, keep the path; otherwise use placeholder
+        path = self.ds.meta.get("path", "<PATH_TO_ANNOTATION_FILE>")
+        header += f'ds = load_dataset(r"{path}", source="{src}")\n'
+        header += "ds = ds.edit_labels()  # optional: opens labeling grid\n\n"
+
+        if m == "VOM_VOA":
+            entry = ", ".join([f'"{x}"' for x in self._split_names(self.entry_edit.text())])
+            target = ", ".join([f'"{x}"' for x in self._split_names(self.target_edit.text())])
+            sd = float(self.stand_dist.value())
+            return header + (
+                f"res = VOM_VOA(data=ds, entry=[{entry}], target=[{target}], stand_dist={sd})\n"
+                "print(res)\n"
+            )
+
+        if m == "AOA_SF":
+            entry = ", ".join([f'"{x}"' for x in self._split_names(self.entry_edit.text())])
+            target_list = self._split_names(self.target_edit.text())
+            target = target_list[0] if target_list else "<TARGET_PIVOT>"
+            cons_list = self._split_names(self.constraints_edit.text())
+            if cons_list:
+                cons = ", ".join([f'"{x}"' for x in cons_list])
+                cons_clause = f", constraints=[{cons}]"
+            else:
+                cons_clause = ""
+            return header + (
+                f'res = AOA_SF(data=ds, entry=[{entry}], target="{target}"{cons_clause})\n'
+                "print(res)\n"
+            )
+
+        # AOE
+        A = self.A_edit.text().strip() or "<A>"
+        B = self.B_edit.text().strip() or "<B>"
+        C = self.C_edit.text().strip() or "<C>"
+        return header + (
+            f'res = AOE(data=ds, A="{A}", B="{B}", C="{C}")\n'
+            "print(res)\n"
+        )
+
+    def _copy_snippet(self):
+        snip = self._current_metric_snippet()
+        QtWidgets.QApplication.clipboard().setText(snip)
+        QtWidgets.QMessageBox.information(self, "Copied", "Python snippet copied to clipboard.")
+
+    def _export_dataset(self):
+        fmt, ok = QtWidgets.QInputDialog.getItem(
+            self, "Export format", "Choose export format:", ["CSV", "JSON"], 0, False
+        )
+        if not ok:
+            return
+
+        if fmt == "CSV":
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self, "Save CSV", "surgiplot_points.csv", "CSV (*.csv)"
+            )
+            if not path:
+                return
+            self.ds.export_csv(path)
+        else:
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self, "Save JSON", "surgiplot_dataset.json", "JSON (*.json)"
+            )
+            if not path:
+                return
+            self.ds.export_json(path)
+
+        QtWidgets.QMessageBox.information(self, "Exported", f"Saved to:\n{path}")
 
 def main():
     app = QtWidgets.QApplication([])
