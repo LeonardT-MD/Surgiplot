@@ -127,8 +127,8 @@ class StartWindow(QtWidgets.QWidget):
         ds.apply_labels_from_table(rows, overwrite=True)
 
         # Go to metric setup
-        mw = MetricWindow(ds)
-        mw.show()
+        self.metric_window = MetricWindow(ds)   # keep reference alive
+        self.metric_window.show()
         self.close()
 
     def _parse_manual(self, raw: str, source: str):
