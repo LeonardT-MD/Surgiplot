@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from PySide6 import QtWidgets, QtCore
-from typing import Optional
 from surgiplot.core.io.loaders import load_dataset, load_points_from_manual
 from surgiplot.gui.label_editor import LabelEditorDialog
 from surgiplot.metrics import VOM_VOA, AOA_SF, AOE
+
 
 class StartWindow(QtWidgets.QWidget):
     def __init__(self):
@@ -14,14 +14,18 @@ class StartWindow(QtWidgets.QWidget):
 
         layout = QtWidgets.QVBoxLayout(self)
 
-        title = QtWidgets.QLabel("<h2>Surgiplot</h2><p>Load points, label them, then run metrics.</p>")
+        title = QtWidgets.QLabel(
+            "<h2>Surgiplot</h2><p>Load points, label them, then run metrics.</p>"
+        )
         title.setTextFormat(QtCore.Qt.RichText)
         layout.addWidget(title)
 
         # Mode selection
         mode_group = QtWidgets.QGroupBox("Input mode")
         mode_layout = QtWidgets.QVBoxLayout(mode_group)
-        self.rb_file = QtWidgets.QRadioButton("Load annotation file (txt/csv/tsv/space-delimited)")
+        self.rb_file = QtWidgets.QRadioButton(
+            "Load annotation file (txt/csv/tsv/space-delimited)"
+        )
         self.rb_manual = QtWidgets.QRadioButton("Manual entry (paste coordinates)")
         self.rb_file.setChecked(True)
         mode_layout.addWidget(self.rb_file)
@@ -49,7 +53,12 @@ class StartWindow(QtWidgets.QWidget):
 
         # Manual text
         self.manual_text = QtWidgets.QPlainTextEdit()
-        self.manual_text.setPlaceholderText("Manual entry format (one point per line):\nname x y z\nOR\nx y z (names auto-assigned)")
+        self.manual_text.setPlaceholderText(
+            "Manual entry format (one point per line):\n"
+            "name x y z\n"
+            "OR\n"
+            "x y z (names auto-assigned)"
+        )
         self.manual_text.setVisible(False)
         layout.addWidget(self.manual_text)
 
@@ -63,20 +72,27 @@ class StartWindow(QtWidgets.QWidget):
     def _toggle_mode(self):
         is_file = self.rb_file.isChecked()
         self.path_edit.setVisible(is_file)
-        # browse button is sibling in layout; easiest: leave it visible, but user sees edit anyway
         self.manual_text.setVisible(not is_file)
 
     def _browse(self):
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select annotation file", "", "Text/CSV (*.txt *.csv *.tsv);;All files (*)")
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select annotation file",
+            "",
+            "Text/CSV (*.txt *.csv *.tsv);;All files (*)",
+        )
         if path:
             self.path_edit.setText(path)
 
     def _continue(self):
         src = self.source.currentText()
+
         if self.rb_file.isChecked():
             path = self.path_edit.text().strip()
             if not path:
-                QtWidgets.QMessageBox.warning(self, "Missing file", "Please select an annotation file.")
+                QtWidgets.QMessageBox.warning(
+                    self, "Missing file", "Please select an annotation file."
+                )
                 return
             try:
                 ds = load_dataset(path, source=src, alias_points=True)
@@ -86,7 +102,9 @@ class StartWindow(QtWidgets.QWidget):
         else:
             raw = self.manual_text.toPlainText().strip()
             if not raw:
-                QtWidgets.QMessageBox.warning(self, "Missing input", "Please paste coordinates for manual entry.")
+                QtWidgets.QMessageBox.warning(
+                    self, "Missing input", "Please paste coordinates for manual entry."
+                )
                 return
             try:
                 ds = self._parse_manual(raw, source=src)
@@ -95,9 +113,14 @@ class StartWindow(QtWidgets.QWidget):
                 return
 
         # Open label editor
-        dlg = LabelEditorDialog(ds.to_table_rows(), source=ds.meta.get("source", ""), parent=self)
+        dlg = LabelEditorDialog(
+            ds.to_table_rows(),
+            source=ds.meta.get("source", ""),
+            parent=self,
+        )
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
+
         rows, src2 = dlg.get_rows_and_source()
         if src2:
             ds.meta["source"] = src2
@@ -121,9 +144,15 @@ class StartWindow(QtWidgets.QWidget):
                 pts.append([float(parts[0]), float(parts[1]), float(parts[2])])
             else:
                 raise ValueError(f"Bad line: '{ln}'")
+
         if names:
-            return load_points_from_manual(pts, names=names, source=source, alias_points=True)
-        return load_points_from_manual(pts, names=None, source=source, alias_points=False)
+            return load_points_from_manual(
+                pts, names=names, source=source, alias_points=True
+            )
+        return load_points_from_manual(
+            pts, names=None, source=source, alias_points=False
+        )
+
 
 class MetricWindow(QtWidgets.QWidget):
     def __init__(self, ds):
@@ -134,7 +163,11 @@ class MetricWindow(QtWidgets.QWidget):
 
         layout = QtWidgets.QVBoxLayout(self)
 
-        layout.addWidget(QtWidgets.QLabel(f"<b>Dataset loaded</b> — source: {self.ds.meta.get('source','')}"))
+        layout.addWidget(
+            QtWidgets.QLabel(
+                f"<b>Dataset loaded</b> — source: {self.ds.meta.get('source', '')}"
+            )
+        )
 
         # Metric selector
         self.metric = QtWidgets.QComboBox()
@@ -145,15 +178,21 @@ class MetricWindow(QtWidgets.QWidget):
         form = QtWidgets.QFormLayout()
 
         self.entry_edit = QtWidgets.QLineEdit()
-        self.entry_edit.setPlaceholderText("Entry points: comma-separated names (e.g., point_1, point_2, point_3, point_4)")
+        self.entry_edit.setPlaceholderText(
+            "Entry points: comma-separated names (e.g., point_1, point_2, point_3, point_4)"
+        )
         form.addRow("Entry", self.entry_edit)
 
         self.target_edit = QtWidgets.QLineEdit()
-        self.target_edit.setPlaceholderText("Target points (polygon) or pivot point (AOE/AOA_SF)")
+        self.target_edit.setPlaceholderText(
+            "Target points (polygon) or pivot point (AOE/AOA_SF)"
+        )
         form.addRow("Target", self.target_edit)
 
         self.constraints_edit = QtWidgets.QLineEdit()
-        self.constraints_edit.setPlaceholderText("Optional constraints (AOA_SF): comma-separated")
+        self.constraints_edit.setPlaceholderText(
+            "Optional constraints (AOA_SF): comma-separated"
+        )
         form.addRow("Constraints", self.constraints_edit)
 
         self.stand_dist = QtWidgets.QDoubleSpinBox()
@@ -162,16 +201,19 @@ class MetricWindow(QtWidgets.QWidget):
         self.stand_dist.setSuffix(" mm")
         form.addRow("stand_dist (sVOM)", self.stand_dist)
 
-        self.A_edit = QtWidgets.QLineEdit(); self.A_edit.setPlaceholderText("A point name")
-        self.B_edit = QtWidgets.QLineEdit(); self.B_edit.setPlaceholderText("B pivot name")
-        self.C_edit = QtWidgets.QLineEdit(); self.C_edit.setPlaceholderText("C point name")
+        self.A_edit = QtWidgets.QLineEdit()
+        self.A_edit.setPlaceholderText("A point name")
+        self.B_edit = QtWidgets.QLineEdit()
+        self.B_edit.setPlaceholderText("B pivot name")
+        self.C_edit = QtWidgets.QLineEdit()
+        self.C_edit.setPlaceholderText("C point name")
         form.addRow("AOE A", self.A_edit)
         form.addRow("AOE B", self.B_edit)
         form.addRow("AOE C", self.C_edit)
 
         layout.addLayout(form)
 
-        
+        # Buttons
         btn_row = QtWidgets.QHBoxLayout()
 
         btn_run = QtWidgets.QPushButton("Run")
@@ -189,6 +231,7 @@ class MetricWindow(QtWidgets.QWidget):
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
+        # Output
         self.out = QtWidgets.QPlainTextEdit()
         self.out.setReadOnly(True)
         layout.addWidget(self.out)
@@ -219,25 +262,54 @@ class MetricWindow(QtWidgets.QWidget):
             if m == "VOM_VOA":
                 entry = self._split_names(self.entry_edit.text())
                 target = self._split_names(self.target_edit.text())
-                res = VOM_VOA(data=self.ds, entry=entry, target=target, stand_dist=float(self.stand_dist.value()), return_debug=True)
-                self.out.setPlainText(f"VoA (deg): {res.voa_deg:.3f}\nVOM (mm^3): {res.vom_mm3:.3f}\nsVOM (mm^3): {res.svom_mm3:.3f}\n\nDebug:\n{res.debug}")
+                res = VOM_VOA(
+                    data=self.ds,
+                    entry=entry,
+                    target=target,
+                    stand_dist=float(self.stand_dist.value()),
+                    return_debug=True,
+                )
+                self.out.setPlainText(
+                    f"VoA (deg): {res.voa_deg:.3f}\n"
+                    f"VOM (mm^3): {res.vom_mm3:.3f}\n"
+                    f"sVOM (mm^3): {res.svom_mm3:.3f}\n\n"
+                    f"Debug:\n{res.debug}"
+                )
+
             elif m == "AOA_SF":
                 entry = self._split_names(self.entry_edit.text())
                 target = self._split_names(self.target_edit.text())
                 if len(target) != 1:
                     raise ValueError("AOA_SF expects target as a single pivot point name.")
                 constraints = self._split_names(self.constraints_edit.text()) or None
-                res = AOA_SF(data=self.ds, entry=entry, target=target[0], constraints=constraints, return_debug=True)
-                self.out.setPlainText(f"AoA vertical (deg): {res.aoa_vertical_deg:.3f}\nAoA horizontal (deg): {res.aoa_horizontal_deg:.3f}\nSF proxy area (mm^2): {res.sf_proxy_mm2:.3f}\n\nDebug:\n{res.debug}")
+                res = AOA_SF(
+                    data=self.ds,
+                    entry=entry,
+                    target=target[0],
+                    constraints=constraints,
+                    return_debug=True,
+                )
+                self.out.setPlainText(
+                    f"AoA vertical (deg): {res.aoa_vertical_deg:.3f}\n"
+                    f"AoA horizontal (deg): {res.aoa_horizontal_deg:.3f}\n"
+                    f"SF proxy area (mm^2): {res.sf_proxy_mm2:.3f}\n\n"
+                    f"Debug:\n{res.debug}"
+                )
+
             else:
                 A = self.A_edit.text().strip()
                 B = self.B_edit.text().strip()
                 C = self.C_edit.text().strip()
                 res = AOE(data=self.ds, A=A, B=B, C=C, return_debug=True)
-                self.out.setPlainText(f"AoE (deg): {res.aoe_deg:.3f}\n\nDebug:\n{res.debug}")
+                self.out.setPlainText(
+                    f"AoE (deg): {res.aoe_deg:.3f}\n\n"
+                    f"Debug:\n{res.debug}"
+                )
+
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", str(e))
-        def _current_metric_snippet(self) -> str:
+
+    def _current_metric_snippet(self) -> str:
         m = self.metric.currentText()
         src = self.ds.meta.get("source", "")
 
@@ -247,7 +319,6 @@ class MetricWindow(QtWidgets.QWidget):
             f"# Source of data: {src}\n"
         )
 
-        # if loaded from file, keep the path; otherwise use placeholder
         path = self.ds.meta.get("path", "<PATH_TO_ANNOTATION_FILE>")
         header += f'ds = load_dataset(r"{path}", source="{src}")\n'
         header += "ds = ds.edit_labels()  # optional: opens labeling grid\n\n"
@@ -265,18 +336,19 @@ class MetricWindow(QtWidgets.QWidget):
             entry = ", ".join([f'"{x}"' for x in self._split_names(self.entry_edit.text())])
             target_list = self._split_names(self.target_edit.text())
             target = target_list[0] if target_list else "<TARGET_PIVOT>"
+
             cons_list = self._split_names(self.constraints_edit.text())
             if cons_list:
                 cons = ", ".join([f'"{x}"' for x in cons_list])
                 cons_clause = f", constraints=[{cons}]"
             else:
                 cons_clause = ""
+
             return header + (
                 f'res = AOA_SF(data=ds, entry=[{entry}], target="{target}"{cons_clause})\n'
                 "print(res)\n"
             )
 
-        # AOE
         A = self.A_edit.text().strip() or "<A>"
         B = self.B_edit.text().strip() or "<B>"
         C = self.C_edit.text().strip() or "<C>"
@@ -313,6 +385,7 @@ class MetricWindow(QtWidgets.QWidget):
             self.ds.export_json(path)
 
         QtWidgets.QMessageBox.information(self, "Exported", f"Saved to:\n{path}")
+
 
 def main():
     app = QtWidgets.QApplication([])
