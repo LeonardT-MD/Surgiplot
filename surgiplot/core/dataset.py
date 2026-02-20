@@ -144,7 +144,7 @@ class Dataset:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
 
-    def edit_labels\(self\) -> \"Dataset\":
+    def edit_labels(self) -> "Dataset":
         """Open the Qt labeling grid and return self (mutated)."""
         from surgiplot.gui.label_editor import run_label_editor
         rows = self.to_table_rows()
