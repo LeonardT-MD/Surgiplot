@@ -5,71 +5,116 @@ from PySide6 import QtWidgets, QtCore
 from surgiplot.core.io.loaders import load_dataset, load_points_from_manual
 from surgiplot.metrics import VOM_VOA, AOA_SF, AOE, DISTANCE_3D, AREA_3D
 
-
 # -------------------------
 # Matplotlib 3D plot panel
 # -------------------------
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
+# Create plotting if missing + degrade gracefully if matplotlib is not installed.
+try:
+    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+    from matplotlib.figure import Figure
+
+    HAS_MPL = True
+except Exception:
+    HAS_MPL = False
+    FigureCanvas = None  # type: ignore
+    Figure = None  # type: ignore
 
 
 class PlotPanel(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        if not HAS_MPL:
+            msg = QtWidgets.QLabel(
+                "<b>3D preview disabled</b><br>"
+                "Install matplotlib to enable the 3D plot panel.<br><br>"
+                "<code>pip install matplotlib</code>"
+            )
+            msg.setWordWrap(True)
+            layout.addWidget(msg)
+            self.fig = None
+            self.canvas = None
+            self.ax = None
+            return
+
         self.fig = Figure()
         self.canvas = FigureCanvas(self.fig)
         self.ax = self.fig.add_subplot(111, projection="3d")
-        layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.canvas)
 
     def clear(self):
+        if not HAS_MPL:
+            return
         self.fig.clear()
         self.ax = self.fig.add_subplot(111, projection="3d")
 
+    def _draw(self):
+        if not HAS_MPL:
+            return
+        self.canvas.draw()
+
     def plot_points(self, ds, highlight: list[str] | None = None, title: str = ""):
+        if not HAS_MPL:
+            return
+
         self.clear()
 
         # all points
         xs, ys, zs = [], [], []
-        for k, v in ds.points.items():
-            xs.append(float(v[0])); ys.append(float(v[1])); zs.append(float(v[2]))
+        for _k, v in ds.points.items():
+            xs.append(float(v[0]))
+            ys.append(float(v[1]))
+            zs.append(float(v[2]))
         self.ax.scatter(xs, ys, zs, s=10)
 
-        # highlight points (resolved canonical names)
+        # highlight points (canonical names expected)
         if highlight:
             hx, hy, hz = [], [], []
             for nm in highlight:
                 p = ds.points[nm]
-                hx.append(float(p[0])); hy.append(float(p[1])); hz.append(float(p[2]))
+                hx.append(float(p[0]))
+                hy.append(float(p[1]))
+                hz.append(float(p[2]))
             self.ax.scatter(hx, hy, hz, s=60)
 
         self.ax.set_title(title)
-        self.ax.set_xlabel("X"); self.ax.set_ylabel("Y"); self.ax.set_zlabel("Z")
-        self.canvas.draw()
+        self.ax.set_xlabel("X")
+        self.ax.set_ylabel("Y")
+        self.ax.set_zlabel("Z")
+        self._draw()
 
     def plot_vom_voa(self, ds, entry: list[str], target: list[str], title="VOM_VOA view"):
+        if not HAS_MPL:
+            return
+
         self.clear()
-        # base scatter
         self.plot_points(ds, title=title)
 
-        # polygons
         def poly_coords(names):
             pts = [ds.points[n] for n in names]
-            return [float(p[0]) for p in pts], [float(p[1]) for p in pts], [float(p[2]) for p in pts]
+            return (
+                [float(p[0]) for p in pts],
+                [float(p[1]) for p in pts],
+                [float(p[2]) for p in pts],
+            )
 
         ex, ey, ez = poly_coords(entry)
         tx, ty, tz = poly_coords(target)
 
-        # close polygons visually
         ex2, ey2, ez2 = ex + [ex[0]], ey + [ey[0]], ez + [ez[0]]
         tx2, ty2, tz2 = tx + [tx[0]], ty + [ty[0]], tz + [tz[0]]
 
         self.ax.plot(ex2, ey2, ez2, linewidth=2)
         self.ax.plot(tx2, ty2, tz2, linewidth=2)
 
-        self.canvas.draw()
+        self._draw()
 
     def plot_aoa_sf(self, ds, cranial: str, caudal: str, medial: str, lateral: str, pivot: str, title="AOA_SF view"):
+        if not HAS_MPL:
+            return
+
         self.clear()
         self.plot_points(ds, title=title)
 
@@ -83,31 +128,68 @@ class PlotPanel(QtWidgets.QWidget):
         p = ds.points[pivot]
         self.ax.scatter([float(p[0])], [float(p[1])], [float(p[2])], s=80)
 
-        self.canvas.draw()
+        self._draw()
 
     def plot_aoe(self, ds, A: str, B: str, C: str, title="AOE view"):
+        if not HAS_MPL:
+            return
+
         self.clear()
         self.plot_points(ds, title=title)
 
-        a = ds.points[A]; b = ds.points[B]; c = ds.points[C]
+        a = ds.points[A]
+        b = ds.points[B]
+        c = ds.points[C]
         ax, ay, az = float(a[0]), float(a[1]), float(a[2])
         bx, by, bz = float(b[0]), float(b[1]), float(b[2])
         cx, cy, cz = float(c[0]), float(c[1]), float(c[2])
 
-        # rays AB and BC
         self.ax.plot([ax, bx], [ay, by], [az, bz], linewidth=3)
         self.ax.plot([bx, cx], [by, cy], [bz, cz], linewidth=3)
 
-        self.canvas.draw()
+        self._draw()
+
+    def plot_distance(self, ds, A: str, B: str, title="DISTANCE_3D view"):
+        if not HAS_MPL:
+            return
+
+        self.clear()
+        self.plot_points(ds, highlight=[A, B], title=title)
+
+        a = ds.points[A]
+        b = ds.points[B]
+        ax, ay, az = float(a[0]), float(a[1]), float(a[2])
+        bx, by, bz = float(b[0]), float(b[1]), float(b[2])
+
+        self.ax.plot([ax, bx], [ay, by], [az, bz], linewidth=3)
+        self._draw()
+
+    def plot_area(self, ds, poly: list[str], title="AREA_3D view"):
+        if not HAS_MPL:
+            return
+
+        self.clear()
+        self.plot_points(ds, highlight=poly, title=title)
+
+        pts = [ds.points[n] for n in poly]
+        xs = [float(p[0]) for p in pts]
+        ys = [float(p[1]) for p in pts]
+        zs = [float(p[2]) for p in pts]
+
+        # close polygon
+        xs2 = xs + [xs[0]]
+        ys2 = ys + [ys[0]]
+        zs2 = zs + [zs[0]]
+
+        self.ax.plot(xs2, ys2, zs2, linewidth=2)
+        self._draw()
 
 
 # -------------------------
 # Dataset table panel
 # -------------------------
 class DatasetPanel(QtWidgets.QWidget):
-    """
-    Always-visible dataset table with editable 'labels' column.
-    """
+    """Always-visible dataset table with editable 'labels' column."""
     applied = QtCore.Signal()  # emitted when Apply pressed
 
     def __init__(self, ds, parent=None):
@@ -152,8 +234,7 @@ class DatasetPanel(QtWidgets.QWidget):
             self.table.setItem(i, 1, QtWidgets.QTableWidgetItem(str(r["x"])))
             self.table.setItem(i, 2, QtWidgets.QTableWidgetItem(str(r["y"])))
             self.table.setItem(i, 3, QtWidgets.QTableWidgetItem(str(r["z"])))
-            lab_item = QtWidgets.QTableWidgetItem(str(r.get("labels", "")))
-            self.table.setItem(i, 4, lab_item)
+            self.table.setItem(i, 4, QtWidgets.QTableWidgetItem(str(r.get("labels", ""))))
 
         # lock coords from editing; labels editable
         for row in range(self.table.rowCount()):
@@ -164,23 +245,21 @@ class DatasetPanel(QtWidgets.QWidget):
     def to_rows(self):
         rows = []
         for i in range(self.table.rowCount()):
-            rows.append({
-                "name": self.table.item(i, 0).text(),
-                "x": float(self.table.item(i, 1).text()),
-                "y": float(self.table.item(i, 2).text()),
-                "z": float(self.table.item(i, 3).text()),
-                "labels": self.table.item(i, 4).text().strip(),
-            })
+            rows.append(
+                {
+                    "name": self.table.item(i, 0).text(),
+                    "x": float(self.table.item(i, 1).text()),
+                    "y": float(self.table.item(i, 2).text()),
+                    "z": float(self.table.item(i, 3).text()),
+                    "labels": self.table.item(i, 4).text().strip(),
+                }
+            )
         return rows
 
     def _apply(self):
-        # update source
         self.ds.meta["source"] = self.source_cb.currentText()
-
-        # apply labels
         rows = self.to_rows()
         self.ds.apply_labels_from_table(rows, overwrite=True)
-
         QtWidgets.QMessageBox.information(self, "Applied", "Labels applied to dataset.")
         self.applied.emit()
 
@@ -198,7 +277,7 @@ class MetricPanel(QtWidgets.QWidget):
         layout.addWidget(QtWidgets.QLabel("<b>Metrics</b>"))
 
         self.metric_cb = QtWidgets.QComboBox()
-        self.metric_cb.addItems(["VOM_VOA", "AOA_SF", "AOE"])
+        self.metric_cb.addItems(["VOM_VOA", "AOA_SF", "AOE", "DISTANCE_3D", "AREA_3D"])
         layout.addWidget(self.metric_cb)
 
         self.form = QtWidgets.QFormLayout()
@@ -219,11 +298,16 @@ class MetricPanel(QtWidgets.QWidget):
         self.form.addRow("stand_dist (sVOM)", self.stand_dist)
 
         # AOA_SF fields (cranial/caudal/medial/lateral + pivot)
-        self.aoa_cranial = QtWidgets.QLineEdit(); self.aoa_cranial.setPlaceholderText("cranial entry point")
-        self.aoa_caudal  = QtWidgets.QLineEdit(); self.aoa_caudal.setPlaceholderText("caudal entry point")
-        self.aoa_medial  = QtWidgets.QLineEdit(); self.aoa_medial.setPlaceholderText("medial entry point")
-        self.aoa_lateral = QtWidgets.QLineEdit(); self.aoa_lateral.setPlaceholderText("lateral entry point")
-        self.aoa_pivot   = QtWidgets.QLineEdit(); self.aoa_pivot.setPlaceholderText("pivot point")
+        self.aoa_cranial = QtWidgets.QLineEdit()
+        self.aoa_cranial.setPlaceholderText("cranial entry point")
+        self.aoa_caudal = QtWidgets.QLineEdit()
+        self.aoa_caudal.setPlaceholderText("caudal entry point")
+        self.aoa_medial = QtWidgets.QLineEdit()
+        self.aoa_medial.setPlaceholderText("medial entry point")
+        self.aoa_lateral = QtWidgets.QLineEdit()
+        self.aoa_lateral.setPlaceholderText("lateral entry point")
+        self.aoa_pivot = QtWidgets.QLineEdit()
+        self.aoa_pivot.setPlaceholderText("pivot point")
 
         self.form.addRow("AOA_SF cranial", self.aoa_cranial)
         self.form.addRow("AOA_SF caudal", self.aoa_caudal)
@@ -236,12 +320,28 @@ class MetricPanel(QtWidgets.QWidget):
         self.form.addRow("AOA_SF constraints", self.aoa_constraints)
 
         # AOE fields
-        self.A_edit = QtWidgets.QLineEdit(); self.A_edit.setPlaceholderText("A point name")
-        self.B_edit = QtWidgets.QLineEdit(); self.B_edit.setPlaceholderText("B pivot name")
-        self.C_edit = QtWidgets.QLineEdit(); self.C_edit.setPlaceholderText("C point name")
+        self.A_edit = QtWidgets.QLineEdit()
+        self.A_edit.setPlaceholderText("A point name")
+        self.B_edit = QtWidgets.QLineEdit()
+        self.B_edit.setPlaceholderText("B pivot name")
+        self.C_edit = QtWidgets.QLineEdit()
+        self.C_edit.setPlaceholderText("C point name")
         self.form.addRow("AOE A", self.A_edit)
         self.form.addRow("AOE B", self.B_edit)
         self.form.addRow("AOE C", self.C_edit)
+
+        # DISTANCE_3D fields
+        self.dist_A = QtWidgets.QLineEdit()
+        self.dist_A.setPlaceholderText("A point name/label")
+        self.dist_B = QtWidgets.QLineEdit()
+        self.dist_B.setPlaceholderText("B point name/label")
+        self.form.addRow("DISTANCE A", self.dist_A)
+        self.form.addRow("DISTANCE B", self.dist_B)
+
+        # AREA_3D field
+        self.area_poly = QtWidgets.QLineEdit()
+        self.area_poly.setPlaceholderText("Polygon points (>=3), comma-separated")
+        self.form.addRow("AREA polygon", self.area_poly)
 
         layout.addLayout(self.form)
 
@@ -262,28 +362,49 @@ class MetricPanel(QtWidgets.QWidget):
     def _emit_run(self):
         self.run_requested.emit(self.metric_cb.currentText())
 
+    def _set_row_visible(self, widget: QtWidgets.QWidget, visible: bool):
+        """Hide/show a widget row in QFormLayout by toggling both label+field widgets."""
+        widget.setVisible(visible)
+        # Also hide/show the associated label in the form layout
+        for i in range(self.form.rowCount()):
+            label_item = self.form.itemAt(i, QtWidgets.QFormLayout.LabelRole)
+            field_item = self.form.itemAt(i, QtWidgets.QFormLayout.FieldRole)
+            if field_item and field_item.widget() is widget:
+                if label_item and label_item.widget():
+                    label_item.widget().setVisible(visible)
+                break
+
     def _update_visibility(self, metric: str):
         is_vom = metric == "VOM_VOA"
         is_aoa = metric == "AOA_SF"
         is_aoe = metric == "AOE"
+        is_dist = metric == "DISTANCE_3D"
+        is_area = metric == "AREA_3D"
 
         # VOM_VOA
-        self.vom_entry.setVisible(is_vom)
-        self.vom_target.setVisible(is_vom)
-        self.stand_dist.setVisible(is_vom)
+        self._set_row_visible(self.vom_entry, is_vom)
+        self._set_row_visible(self.vom_target, is_vom)
+        self._set_row_visible(self.stand_dist, is_vom)
 
         # AOA_SF
-        self.aoa_cranial.setVisible(is_aoa)
-        self.aoa_caudal.setVisible(is_aoa)
-        self.aoa_medial.setVisible(is_aoa)
-        self.aoa_lateral.setVisible(is_aoa)
-        self.aoa_pivot.setVisible(is_aoa)
-        self.aoa_constraints.setVisible(is_aoa)
+        self._set_row_visible(self.aoa_cranial, is_aoa)
+        self._set_row_visible(self.aoa_caudal, is_aoa)
+        self._set_row_visible(self.aoa_medial, is_aoa)
+        self._set_row_visible(self.aoa_lateral, is_aoa)
+        self._set_row_visible(self.aoa_pivot, is_aoa)
+        self._set_row_visible(self.aoa_constraints, is_aoa)
 
         # AOE
-        self.A_edit.setVisible(is_aoe)
-        self.B_edit.setVisible(is_aoe)
-        self.C_edit.setVisible(is_aoe)
+        self._set_row_visible(self.A_edit, is_aoe)
+        self._set_row_visible(self.B_edit, is_aoe)
+        self._set_row_visible(self.C_edit, is_aoe)
+
+        # DISTANCE_3D
+        self._set_row_visible(self.dist_A, is_dist)
+        self._set_row_visible(self.dist_B, is_dist)
+
+        # AREA_3D
+        self._set_row_visible(self.area_poly, is_area)
 
     @staticmethod
     def split_names(s: str):
@@ -320,15 +441,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.dataset_panel.applied.connect(self._on_dataset_applied)
         self.metric_panel.run_requested.connect(self._run_metric)
 
-        # initial plot
         self.plot_panel.plot_points(self.ds, title="Dataset overview")
 
     def _on_dataset_applied(self):
-        # refresh plot to reflect any new labels
+        # refresh plot + table view
+        self.dataset_panel.populate()
         self.plot_panel.plot_points(self.ds, title="Dataset updated")
 
     def _resolve(self, name: str) -> str:
-        # requires Dataset.resolve_name to exist; if not, fall back
+        name = (name or "").strip()
+        if not name:
+            return name
         if hasattr(self.ds, "resolve_name"):
             return self.ds.resolve_name(name)
         return name
@@ -364,11 +487,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plot_panel.plot_vom_voa(self.ds, entry, target)
 
             elif metric_name == "AOA_SF":
-                cran = self._resolve(self.metric_panel.aoa_cranial.text().strip())
-                caud = self._resolve(self.metric_panel.aoa_caudal.text().strip())
-                med  = self._resolve(self.metric_panel.aoa_medial.text().strip())
-                lat  = self._resolve(self.metric_panel.aoa_lateral.text().strip())
-                piv  = self._resolve(self.metric_panel.aoa_pivot.text().strip())
+                cran = self._resolve(self.metric_panel.aoa_cranial.text())
+                caud = self._resolve(self.metric_panel.aoa_caudal.text())
+                med = self._resolve(self.metric_panel.aoa_medial.text())
+                lat = self._resolve(self.metric_panel.aoa_lateral.text())
+                piv = self._resolve(self.metric_panel.aoa_pivot.text())
+
+                if not all([cran, caud, med, lat, piv]):
+                    raise ValueError("AOA_SF requires cranial, caudal, medial, lateral, and pivot.")
 
                 entry = [cran, caud, med, lat]
                 constraints_raw = self.metric_panel.split_names(self.metric_panel.aoa_constraints.text())
@@ -390,10 +516,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
                 self.plot_panel.plot_aoa_sf(self.ds, cran, caud, med, lat, piv)
 
-            else:  # AOE
-                A = self._resolve(self.metric_panel.A_edit.text().strip())
-                B = self._resolve(self.metric_panel.B_edit.text().strip())
-                C = self._resolve(self.metric_panel.C_edit.text().strip())
+            elif metric_name == "AOE":
+                A = self._resolve(self.metric_panel.A_edit.text())
+                B = self._resolve(self.metric_panel.B_edit.text())
+                C = self._resolve(self.metric_panel.C_edit.text())
+
+                if not all([A, B, C]):
+                    raise ValueError("AOE requires A, B, and C.")
 
                 res = AOE(data=self.ds, A=A, B=B, C=C, return_debug=True)
 
@@ -402,6 +531,35 @@ class MainWindow(QtWidgets.QMainWindow):
                     f"Debug:\n{res.debug}"
                 )
                 self.plot_panel.plot_aoe(self.ds, A, B, C)
+
+            elif metric_name == "DISTANCE_3D":
+                A = self._resolve(self.metric_panel.dist_A.text())
+                B = self._resolve(self.metric_panel.dist_B.text())
+
+                if not all([A, B]):
+                    raise ValueError("DISTANCE_3D requires A and B.")
+
+                res = DISTANCE_3D(data=self.ds, A=A, B=B, return_debug=True)
+
+                self.metric_panel.out.setPlainText(
+                    f"Distance (mm): {res.distance_mm:.3f}\n\n"
+                    f"Debug:\n{res.debug}"
+                )
+                self.plot_panel.plot_distance(self.ds, A, B)
+
+            else:  # AREA_3D
+                poly_raw = self.metric_panel.split_names(self.metric_panel.area_poly.text())
+                if len(poly_raw) < 3:
+                    raise ValueError("AREA_3D requires at least 3 polygon points.")
+                poly = self._resolve_list(poly_raw)
+
+                res = AREA_3D(data=self.ds, polygon=poly, return_debug=True)
+
+                self.metric_panel.out.setPlainText(
+                    f"Area (mm^2): {res.area_mm2:.3f}\n\n"
+                    f"Debug:\n{res.debug}"
+                )
+                self.plot_panel.plot_area(self.ds, poly)
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", str(e))
@@ -424,7 +582,6 @@ class StartWindow(QtWidgets.QWidget):
         title.setTextFormat(QtCore.Qt.RichText)
         layout.addWidget(title)
 
-        # Mode selection
         mode_group = QtWidgets.QGroupBox("Input mode")
         mode_layout = QtWidgets.QVBoxLayout(mode_group)
         self.rb_file = QtWidgets.QRadioButton("Load annotation file (txt/csv/tsv/space-delimited)")
@@ -434,7 +591,6 @@ class StartWindow(QtWidgets.QWidget):
         mode_layout.addWidget(self.rb_manual)
         layout.addWidget(mode_group)
 
-        # Source selection
         src_layout = QtWidgets.QHBoxLayout()
         src_layout.addWidget(QtWidgets.QLabel("Source of data:"))
         self.source = QtWidgets.QComboBox()
@@ -443,7 +599,6 @@ class StartWindow(QtWidgets.QWidget):
         src_layout.addStretch(1)
         layout.addLayout(src_layout)
 
-        # File chooser
         file_layout = QtWidgets.QHBoxLayout()
         self.path_edit = QtWidgets.QLineEdit()
         self.path_edit.setPlaceholderText("Select an annotation file...")
@@ -453,13 +608,11 @@ class StartWindow(QtWidgets.QWidget):
         file_layout.addWidget(btn_browse)
         layout.addLayout(file_layout)
 
-        # Manual text
         self.manual_text = QtWidgets.QPlainTextEdit()
         self.manual_text.setPlaceholderText("Manual entry format:\nname x y z\nOR\nx y z")
         self.manual_text.setVisible(False)
         layout.addWidget(self.manual_text)
 
-        # Continue
         btn = QtWidgets.QPushButton("Open workspace")
         btn.clicked.connect(self._continue)
         layout.addWidget(btn)
@@ -511,7 +664,6 @@ class StartWindow(QtWidgets.QWidget):
                 return
             ds = self._parse_manual(raw, source=src)
 
-        # open workspace
         self.main_window = MainWindow(ds)
         self.main_window.show()
         self.close()
