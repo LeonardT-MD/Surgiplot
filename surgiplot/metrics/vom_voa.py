@@ -15,7 +15,12 @@ class VOMVOAResult:
 
 def _as_poly(data, spec) -> np.ndarray:
     if data is not None:
+        # If spec is a list of names/labels, resolve them explicitly first
+        if isinstance(spec, (list, tuple)) and spec and all(isinstance(x, str) for x in spec):
+            if hasattr(data, "resolve_names"):
+                spec = data.resolve_names(spec)
         return data.resolve_points(spec)
+
     arr = np.asarray(spec, dtype=float)
     if arr.ndim != 2 or arr.shape[1] != 3:
         raise ValueError("Polygon must be (N,3)")
