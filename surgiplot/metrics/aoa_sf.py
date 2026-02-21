@@ -1,39 +1,38 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, Iterable, Union, Sequence
 import numpy as np
+
+PointSpec = Union[str, Sequence[str], np.ndarray, Sequence[Sequence[float]]]
 
 
 @dataclass
 class AOASFResult:
     aoa_vertical_deg: float
     aoa_horizontal_deg: float
-    sf_proxy_mm2: float
+
+    # SF metrics
+    sf_entry_area_mm2: float                  # area of entry quad projected to best-fit plane
+    sf_entry_area_rescaled_mm2: float         # same area after rescaling entry points to fixed radius from pivot (0 if not requested)
+    sf_constraints_proxy_mm2: float           # legacy/optional: convex hull area of constraints projected to plane
+
+    # Rescale metadata
+    rescale_radius_mm: Optional[float] = None
+
     debug: Optional[Dict[str, Any]] = None
 
 
-def _resolve_points(data, spec) -> np.ndarray:
-    """
-    Resolve a point specification to an (N,3) ndarray.
-
-    - If `data` is provided (Dataset), use data.resolve_points(spec).
-      Hardening: if spec is a list/tuple of strings, canonicalize via data.resolve_names first.
-    - If `data` is None, treat spec as numeric.
-    """
+def _resolve_points(data, spec: PointSpec) -> np.ndarray:
     if data is not None:
-        if isinstance(spec, (list, tuple)) and spec and all(isinstance(x, str) for x in spec):
-            if hasattr(data, "resolve_names"):
-                spec = data.resolve_names(spec)
         return data.resolve_points(spec)
-
     arr = np.asarray(spec, dtype=float)
     if arr.ndim == 1:
         arr = arr.reshape(1, 3)
     return arr
 
 
-def _resolve_point(data, spec) -> np.ndarray:
+def _resolve_point(data, spec: Union[str, Iterable[float], np.ndarray]) -> np.ndarray:
     pts = _resolve_points(data, spec)
     if pts.shape[0] != 1:
         raise ValueError("Expected a single point.")
@@ -49,42 +48,25 @@ def _angle_deg(u, v) -> float:
     return float(np.degrees(np.arccos(cosang)))
 
 
-def _convex_hull_area_2d(pts2: np.ndarray) -> float:
-    """Convex hull area (2D) via monotonic chain; SciPy-free fallback."""
-    pts = np.asarray(pts2, dtype=float)
-    if pts.ndim != 2 or pts.shape[1] != 2 or pts.shape[0] < 3:
-        return 0.0
+def _project_to_fixed_radius(p: np.ndarray, pivot: np.ndarray, radius: float) -> np.ndarray:
+    """Project point p along pivot->p direction to be exactly `radius` away from pivot."""
+    v = p - pivot
+    n = float(np.linalg.norm(v))
+    if n < 1e-12:
+        return p.copy()
+    return pivot + (v / n) * float(radius)
 
-    # Sort by x then y
-    pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
 
-    def cross(o, a, b):
-        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+def _polygon_area_3d(points3d: np.ndarray) -> float:
+    """
+    Area of a 3D polygon (not necessarily planar) by projecting to best-fit PCA plane and applying shoelace.
+    Requires your existing geometry helpers.
+    """
+    from surgiplot.core.geometry.pca_plane import project_to_plane_2d
+    from surgiplot.core.geometry.polygon_area import shoelace_area
 
-    lower = []
-    for p in pts:
-        p = (float(p[0]), float(p[1]))
-        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-
-    upper = []
-    for p in reversed(pts):
-        p = (float(p[0]), float(p[1]))
-        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-
-    hull = lower[:-1] + upper[:-1]
-    if len(hull) < 3:
-        return 0.0
-
-    hull = np.asarray(hull, dtype=float)
-
-    # Shoelace area
-    x = hull[:, 0]
-    y = hull[:, 1]
-    return 0.5 * float(abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
+    pts2, _c, _basis = project_to_plane_2d(points3d)
+    return float(shoelace_area(pts2))
 
 
 def AOA_SF(
@@ -96,93 +78,112 @@ def AOA_SF(
     space: str = "native",
     transforms=None,
     return_debug: bool = False,
+    sf_rescale_radius_mm: Optional[float] = None,  # NEW: rescale distance from pivot for SF + AoA triangles (geometry-only)
 ) -> AOASFResult:
-    """Compute AoA + a pragmatic SF proxy.
+    """
+    AoA + SF (entry-area) with optional rescaling about the pivot.
 
-    This function is intentionally **generic** so the package runs end-to-end out of the box.
-    You can later swap in your project-specific AoA/SF implementation without changing the API.
+    Recommended GUI mapping:
+      cranial, caudal, medial, lateral -> entry (4 points)
+      pivot -> target
 
-    Generic definitions used here
-    -----------------------------
-    - Let `cE` be the centroid of the entry polygon (or mean of provided entry points).
-    - Let `T` be the target pivot point.
-    - Direction vector: d = T - cE
+    AoA components:
+      - Vertical AoA: triangle (cranial, caudal, pivot)
+      - Horizontal AoA: triangle (medial, lateral, pivot)
 
-    AoA components (in degrees):
-    - Horizontal AoA: angle between projection of d onto axial plane (XY) and +Y axis
-    - Vertical AoA:   angle between projection of d onto sagittal plane (YZ) and +Z axis
+    SF:
+      - Entry SF area: polygon area of (cranial, caudal, medial, lateral) projected to best-fit plane.
+      - Rescaled entry SF area: same, but with the 4 entry points projected to a fixed radius from pivot.
 
-    SF proxy (mm^2):
-    - If `constraints` are provided (points around the proximal workspace),
-      we approximate SF as the area of the convex hull of constraints projected to the best-fit plane.
-      Tries SciPy ConvexHull; if SciPy is unavailable/broken, falls back to a SciPy-free hull.
-    - Otherwise returns 0.
-
-    Parameters
-    ----------
-    entry:
-      Entry polygon points or names (N>=1). If N>=3 behaves as polygon; if N<3 treated as mean point.
-    target:
-      Pivot/target point (single).
-    constraints:
-      Optional constraint/workspace points (N>=3) for an SF proxy area.
+    Optional legacy:
+      - constraints (>=3 points): convex hull area projected to best-fit plane (kept as additional proxy).
     """
     if entry is None or target is None:
-        raise ValueError("Provide entry and target.")
+        raise ValueError("Provide entry and target/pivot.")
 
     E = _resolve_points(data, entry)
+    if E.shape[0] < 2:
+        raise ValueError("Entry must contain at least 2 points.")
     T = _resolve_point(data, target)
 
-    cE = E.mean(axis=0)
-    d = T - cE
-    if np.linalg.norm(d) < 1e-9:
-        raise ValueError("Entry centroid and target are identical.")
-
-    # Horizontal: projection to XY plane vs +Y axis
-    d_xy = np.array([d[0], d[1], 0.0])
-    if np.linalg.norm(d_xy) < 1e-12:
-        aoa_h = 0.0
+    # Expect 4 entry points for the new AoA/SF convention, but keep generic support:
+    # If 4+ points: use first 2 for V-AoA endpoints, last 2 for H-AoA endpoints (best for GUI)
+    if E.shape[0] < 4:
+        # fall back to centroid-based approach for AoA if user passes generic polygon
+        cE = E.mean(axis=0)
+        d = T - cE
+        d_xy = np.array([d[0], d[1], 0.0])
+        d_yz = np.array([0.0, d[1], d[2]])
+        aoa_h = 0.0 if np.linalg.norm(d_xy) < 1e-12 else _angle_deg(d_xy, np.array([0.0, 1.0, 0.0]))
+        aoa_v = 0.0 if np.linalg.norm(d_yz) < 1e-12 else _angle_deg(d_yz, np.array([0.0, 0.0, 1.0]))
+        sf_entry_area = 0.0
+        sf_entry_area_rescaled = 0.0
     else:
-        aoa_h = _angle_deg(d_xy, np.array([0.0, 1.0, 0.0]))
+        # interpret entry as [cranial, caudal, medial, lateral] (GUI order)
+        p_cran = E[0]
+        p_caud = E[1]
+        p_med = E[2]
+        p_lat = E[3]
 
-    # Vertical: projection to YZ plane vs +Z axis
-    d_yz = np.array([0.0, d[1], d[2]])
-    if np.linalg.norm(d_yz) < 1e-12:
-        aoa_v = 0.0
-    else:
-        aoa_v = _angle_deg(d_yz, np.array([0.0, 0.0, 1.0]))
+        # AoA = included angle at pivot between vectors
+        # Vertical: between (cranial - pivot) and (caudal - pivot)
+        u_v = p_cran - T
+        v_v = p_caud - T
+        aoa_v = _angle_deg(u_v, v_v)
 
-    sf_proxy = 0.0
-    dbg = None
+        # Horizontal: between (medial - pivot) and (lateral - pivot)
+        u_h = p_med - T
+        v_h = p_lat - T
+        aoa_h = _angle_deg(u_h, v_h)
 
+        # SF area from entry quadrilateral
+        entry_quad = np.vstack([p_cran, p_caud, p_med, p_lat])
+        sf_entry_area = _polygon_area_3d(entry_quad)
+
+        sf_entry_area_rescaled = 0.0
+        if sf_rescale_radius_mm is not None:
+            r = float(sf_rescale_radius_mm)
+            if r <= 0:
+                raise ValueError("sf_rescale_radius_mm must be > 0")
+            q2 = np.vstack([
+                _project_to_fixed_radius(p_cran, T, r),
+                _project_to_fixed_radius(p_caud, T, r),
+                _project_to_fixed_radius(p_med,  T, r),
+                _project_to_fixed_radius(p_lat,  T, r),
+            ])
+            sf_entry_area_rescaled = _polygon_area_3d(q2)
+
+    # Optional constraints proxy (kept)
+    sf_constraints_proxy = 0.0
     if constraints is not None:
+        from scipy.spatial import ConvexHull
         from surgiplot.core.geometry.pca_plane import project_to_plane_2d
 
         C = _resolve_points(data, constraints)
         if C.shape[0] >= 3:
             pts2, _c, _basis = project_to_plane_2d(C)
-
-            # Prefer SciPy if available; fallback otherwise
             try:
-                from scipy.spatial import ConvexHull  # type: ignore
-
                 hull = ConvexHull(pts2)
-                sf_proxy = float(hull.volume)  # 2D ConvexHull.volume == area
+                sf_constraints_proxy = float(hull.volume)  # area in 2D
             except Exception:
-                sf_proxy = float(_convex_hull_area_2d(pts2))
+                sf_constraints_proxy = 0.0
 
+    dbg = None
     if return_debug:
         dbg = {
-            "centroid_entry": cE,
-            "target": T,
-            "direction": d,
+            "pivot": T,
+            "entry_points": E,
             "technique": technique,
             "space": space,
+            "sf_rescale_radius_mm": sf_rescale_radius_mm,
         }
 
     return AOASFResult(
         aoa_vertical_deg=float(aoa_v),
         aoa_horizontal_deg=float(aoa_h),
-        sf_proxy_mm2=float(sf_proxy),
+        sf_entry_area_mm2=float(sf_entry_area),
+        sf_entry_area_rescaled_mm2=float(sf_entry_area_rescaled),
+        sf_constraints_proxy_mm2=float(sf_constraints_proxy),
+        rescale_radius_mm=float(sf_rescale_radius_mm) if sf_rescale_radius_mm is not None else None,
         debug=dbg,
     )
