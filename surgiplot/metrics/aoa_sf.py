@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Optional, Any, Dict
 import numpy as np
 
+
 @dataclass
 class AOASFResult:
     aoa_vertical_deg: float
@@ -11,13 +12,26 @@ class AOASFResult:
     sf_proxy_mm2: float
     debug: Optional[Dict[str, Any]] = None
 
+
 def _resolve_points(data, spec) -> np.ndarray:
+    """
+    Resolve a point specification to an (N,3) ndarray.
+
+    - If `data` is provided (Dataset), use data.resolve_points(spec).
+      Hardening: if spec is a list/tuple of strings, canonicalize via data.resolve_names first.
+    - If `data` is None, treat spec as numeric.
+    """
     if data is not None:
+        if isinstance(spec, (list, tuple)) and spec and all(isinstance(x, str) for x in spec):
+            if hasattr(data, "resolve_names"):
+                spec = data.resolve_names(spec)
         return data.resolve_points(spec)
+
     arr = np.asarray(spec, dtype=float)
     if arr.ndim == 1:
-        arr = arr.reshape(1,3)
+        arr = arr.reshape(1, 3)
     return arr
+
 
 def _resolve_point(data, spec) -> np.ndarray:
     pts = _resolve_points(data, spec)
@@ -25,13 +39,53 @@ def _resolve_point(data, spec) -> np.ndarray:
         raise ValueError("Expected a single point.")
     return pts[0]
 
+
 def _angle_deg(u, v) -> float:
     u = np.asarray(u, dtype=float)
     v = np.asarray(v, dtype=float)
-    den = float(np.linalg.norm(u)*np.linalg.norm(v) + 1e-12)
-    cosang = float(np.dot(u, v)/den)
+    den = float(np.linalg.norm(u) * np.linalg.norm(v) + 1e-12)
+    cosang = float(np.dot(u, v) / den)
     cosang = max(-1.0, min(1.0, cosang))
     return float(np.degrees(np.arccos(cosang)))
+
+
+def _convex_hull_area_2d(pts2: np.ndarray) -> float:
+    """Convex hull area (2D) via monotonic chain; SciPy-free fallback."""
+    pts = np.asarray(pts2, dtype=float)
+    if pts.ndim != 2 or pts.shape[1] != 2 or pts.shape[0] < 3:
+        return 0.0
+
+    # Sort by x then y
+    pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower = []
+    for p in pts:
+        p = (float(p[0]), float(p[1]))
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+
+    upper = []
+    for p in reversed(pts):
+        p = (float(p[0]), float(p[1]))
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+
+    hull = lower[:-1] + upper[:-1]
+    if len(hull) < 3:
+        return 0.0
+
+    hull = np.asarray(hull, dtype=float)
+
+    # Shoelace area
+    x = hull[:, 0]
+    y = hull[:, 1]
+    return 0.5 * float(abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
+
 
 def AOA_SF(
     data=None,
@@ -61,6 +115,7 @@ def AOA_SF(
     SF proxy (mm^2):
     - If `constraints` are provided (points around the proximal workspace),
       we approximate SF as the area of the convex hull of constraints projected to the best-fit plane.
+      Tries SciPy ConvexHull; if SciPy is unavailable/broken, falls back to a SciPy-free hull.
     - Otherwise returns 0.
 
     Parameters
@@ -101,16 +156,20 @@ def AOA_SF(
     dbg = None
 
     if constraints is not None:
-        from scipy.spatial import ConvexHull
         from surgiplot.core.geometry.pca_plane import project_to_plane_2d
+
         C = _resolve_points(data, constraints)
         if C.shape[0] >= 3:
             pts2, _c, _basis = project_to_plane_2d(C)
+
+            # Prefer SciPy if available; fallback otherwise
             try:
+                from scipy.spatial import ConvexHull  # type: ignore
+
                 hull = ConvexHull(pts2)
-                sf_proxy = float(hull.volume)  # in 2D ConvexHull.volume == area
+                sf_proxy = float(hull.volume)  # 2D ConvexHull.volume == area
             except Exception:
-                sf_proxy = 0.0
+                sf_proxy = float(_convex_hull_area_2d(pts2))
 
     if return_debug:
         dbg = {
