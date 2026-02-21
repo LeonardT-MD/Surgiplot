@@ -3,7 +3,7 @@ from __future__ import annotations
 from PySide6 import QtWidgets, QtCore
 
 from surgiplot.core.io.loaders import load_dataset, load_points_from_manual
-from surgiplot.metrics import VOM_VOA, AOA_SF, AOE
+from surgiplot.metrics import VOM_VOA, AOA_SF, AOE, DISTANCE_3D, AREA_3D
 
 
 # -------------------------
