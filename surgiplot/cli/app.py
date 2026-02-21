@@ -5,7 +5,7 @@ from rich import print
 from rich.prompt import Prompt
 
 from surgiplot.core.io.loaders import load_dataset, load_points_from_manual
-from surgiplot.metrics import VOM_VOA, AOA_SF, AOE
+from surgiplot.metrics import VOM_VOA, AOA_SF, AOE, DISTANCE_3D, AREA_3D
 
 app = typer.Typer(help="Surgiplot CLI (loads points, opens labeling grid, then runs metrics).")
 
@@ -31,7 +31,6 @@ def _split_csv(s: str) -> list[str]:
 def _resolve_list(ds, names: list[str]) -> list[str]:
     if hasattr(ds, "resolve_names"):
         return ds.resolve_names(names)
-    # fallback: do nothing
     return names
 
 
@@ -81,7 +80,7 @@ def launch():
 
     _label_grid(ds)
     print(f"Loaded {len(ds.points)} points with {len(ds.aliases)} aliases. Source={ds.meta.get('source','')}")
-    print("Run CLI metric commands (vom-voa / aoa-sf / aoe), or use the GUI via `surgiplot_gui`.")
+    print("Run CLI metric commands (vom-voa / aoa-sf / aoe / distance-3d / area-3d), or use the GUI via `surgiplot_gui`.")
 
 
 @app.command("vom-voa")
@@ -100,12 +99,8 @@ def vom_voa(
     ds = load_dataset(file, source=src, alias_points=True)
     _label_grid(ds)
 
-    entry_names = _split_csv(entry)
-    target_names = _split_csv(target)
-
-    # Resolve labels -> canonical point keys
-    entry_names = _resolve_list(ds, entry_names)
-    target_names = _resolve_list(ds, target_names)
+    entry_names = _resolve_list(ds, _split_csv(entry))
+    target_names = _resolve_list(ds, _split_csv(target))
 
     res = VOM_VOA(
         data=ds,
@@ -144,7 +139,13 @@ def aoa_sf(
     _label_grid(ds)
 
     # Determine which mode to use
-    use_new = all([(cranial or "").strip(), (caudal or "").strip(), (medial or "").strip(), (lateral or "").strip(), (pivot or "").strip()])
+    use_new = all([
+        (cranial or "").strip(),
+        (caudal or "").strip(),
+        (medial or "").strip(),
+        (lateral or "").strip(),
+        (pivot or "").strip(),
+    ])
 
     if use_new:
         cran = _resolve_one(ds, cranial)
@@ -202,6 +203,48 @@ def aoe(
 
     res = AOE(data=ds, A=A, B=B, C=C, return_debug=False)
     print({"AoE_deg": res.aoe_deg})
+
+
+@app.command("distance-3d")
+def distance_3d(
+    file: str = typer.Option(None, "--file", help="Annotation file path"),
+    source: str = typer.Option(None, "--source", help="navigation|photogrammetry|scanner"),
+    a: str = typer.Option(..., "--A", help="Point A name/label"),
+    b: str = typer.Option(..., "--B", help="Point B name/label"),
+):
+    """Compute 3D linear distance between points A and B (mm). Opens labeling grid."""
+    if file is None:
+        raise typer.BadParameter("--file is required for this command (use `launch` for manual mode).")
+
+    src = (source or "navigation").strip().lower()
+    ds = load_dataset(file, source=src, alias_points=True)
+    _label_grid(ds)
+
+    A = _resolve_one(ds, a)
+    B = _resolve_one(ds, b)
+
+    res = DISTANCE_3D(data=ds, A=A, B=B, return_debug=False)
+    print({"distance_mm": res.distance_mm})
+
+
+@app.command("area-3d")
+def area_3d(
+    file: str = typer.Option(None, "--file", help="Annotation file path"),
+    source: str = typer.Option(None, "--source", help="navigation|photogrammetry|scanner"),
+    polygon: str = typer.Option(..., "--polygon", help="Comma-separated polygon point names/labels (>=3)"),
+):
+    """Compute 3D polygon area (mm^2) from >=3 points. Opens labeling grid."""
+    if file is None:
+        raise typer.BadParameter("--file is required for this command (use `launch` for manual mode).")
+
+    src = (source or "navigation").strip().lower()
+    ds = load_dataset(file, source=src, alias_points=True)
+    _label_grid(ds)
+
+    poly_names = _resolve_list(ds, _split_csv(polygon))
+
+    res = AREA_3D(data=ds, polygon=poly_names, return_debug=False)
+    print({"area_mm2": res.area_mm2})
 
 
 def main():
