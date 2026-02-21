@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from PySide6 import QtWidgets, QtCore
+
 from surgiplot.core.io.loaders import load_dataset, load_points_from_manual
 from surgiplot.gui.label_editor import LabelEditorDialog
 from surgiplot.metrics import VOM_VOA, AOA_SF, AOE
@@ -11,6 +12,9 @@ class StartWindow(QtWidgets.QWidget):
         super().__init__()
         self.setWindowTitle("Surgiplot")
         self.resize(720, 420)
+
+        # keep references alive
+        self.metric_window: MetricWindow | None = None
 
         layout = QtWidgets.QVBoxLayout(self)
 
@@ -126,8 +130,8 @@ class StartWindow(QtWidgets.QWidget):
             ds.meta["source"] = src2
         ds.apply_labels_from_table(rows, overwrite=True)
 
-        # Go to metric setup
-        self.metric_window = MetricWindow(ds)   # keep reference alive
+        # Go to metric setup (keep reference alive!)
+        self.metric_window = MetricWindow(ds)
         self.metric_window.show()
         self.close()
 
@@ -169,10 +173,10 @@ class MetricWindow(QtWidgets.QWidget):
             )
         )
 
-        # Metric selector
-        self.metric = QtWidgets.QComboBox()
-        self.metric.addItems(["VOM_VOA", "AOA_SF", "AOE"])
-        layout.addWidget(self.metric)
+        # Metric selector (IMPORTANT: do NOT name this `self.metric` — QWidget has metric())
+        self.metric_cb = QtWidgets.QComboBox()
+        self.metric_cb.addItems(["VOM_VOA", "AOA_SF", "AOE"])
+        layout.addWidget(self.metric_cb)
 
         # Inputs
         form = QtWidgets.QFormLayout()
@@ -236,8 +240,8 @@ class MetricWindow(QtWidgets.QWidget):
         self.out.setReadOnly(True)
         layout.addWidget(self.out)
 
-        self.metric.currentTextChanged.connect(self._update_visibility)
-        self._update_visibility(self.metric.currentText())
+        self.metric_cb.currentTextChanged.connect(self._update_visibility)
+        self._update_visibility(self.metric_cb.currentText())
 
     def _update_visibility(self, metric: str):
         is_vom = metric == "VOM_VOA"
@@ -257,7 +261,7 @@ class MetricWindow(QtWidgets.QWidget):
         return [x.strip() for x in (s or "").split(",") if x.strip()]
 
     def _run(self):
-        m = self.metric.currentText()
+        m = self.metric_cb.currentText()
         try:
             if m == "VOM_VOA":
                 entry = self._split_names(self.entry_edit.text())
@@ -310,7 +314,7 @@ class MetricWindow(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "Error", str(e))
 
     def _current_metric_snippet(self) -> str:
-        m = self.metric.currentText()
+        m = self.metric_cb.currentText()
         src = self.ds.meta.get("source", "")
 
         header = (
