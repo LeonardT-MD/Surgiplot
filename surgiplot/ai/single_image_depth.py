@@ -1,7 +1,8 @@
 """
 surgiplot.ai.single_image_depth
 
-Single-image depth -> 3D reconstruction + point picking dialog, separated from app.py.
+Single-image depth -> 3D reconstruction + buffered point picking dialog (OK commits, Cancel discards),
+separated from app.py.
 
 Dependencies (feature-only):
   pip install -U numpy pillow matplotlib transformers torch
@@ -9,8 +10,19 @@ Dependencies (feature-only):
 Notes:
 - Uses HuggingFace transformers "depth-estimation" pipeline (Depth Anything V2).
 - Depth is relative; scale can be set interactively from two 2D clicks (known distance in mm).
-- Click 3D point cloud -> prompt label -> stores into a BUFFER table (edit/remove).
-- Press OK -> commits buffered points into ds.points (optionally overwriting).
+- Click 3D point cloud -> prompt label -> point is stored in a PENDING buffer.
+- You can Rename/Delete/Clear pending points.
+- ONLY when you click OK: pending points are committed into ds.points[label] = xyz.
+- Cancel rejects without modifying ds.
+
+Public API used by GUI:
+- class SingleImage3DDialog(QtWidgets.QDialog)
+
+Typical use:
+    dlg = SingleImage3DDialog(ds, parent=self)
+    if dlg.exec():  # OK
+        # ds.points updated
+        ...
 """
 
 from __future__ import annotations
@@ -18,7 +30,7 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass
-from typing import Optional, Tuple, Dict
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 from PySide6 import QtWidgets, QtCore
@@ -121,6 +133,7 @@ class DepthEstimator:
         except Exception as e:
             raise RuntimeError("Missing dependency: torch. Install CPU or CUDA torch first.") from e
 
+        # NOTE: pipeline handles device selection; users can configure torch/cuda externally.
         self._pipe = pipeline(task="depth-estimation", model=self.model_id)
 
     def predict_depth_raw(self, img_rgb: np.ndarray) -> np.ndarray:
@@ -203,128 +216,7 @@ class PointCloudPicker3D(QtWidgets.QWidget):
 
 
 # -------------------------
-# Picked points buffer panel (label/edit/remove before committing)
-# -------------------------
-class PickedPointsPanel(QtWidgets.QWidget):
-    """
-    Table showing buffered picked points (label, x, y, z). Label is editable; coords are read-only.
-    """
-    changed = QtCore.Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._points: Dict[str, np.ndarray] = {}
-
-        lay = QtWidgets.QVBoxLayout(self)
-        lay.addWidget(QtWidgets.QLabel("<b>Picked points (buffer)</b> — edit labels / remove, then OK to commit"))
-
-        self.table = QtWidgets.QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["label", "x", "y", "z"])
-        self.table.horizontalHeader().setStretchLastSection(True)
-        lay.addWidget(self.table)
-
-        btns = QtWidgets.QHBoxLayout()
-        self.btn_remove = QtWidgets.QPushButton("Remove selected")
-        self.btn_clear = QtWidgets.QPushButton("Clear all")
-        btns.addWidget(self.btn_remove)
-        btns.addWidget(self.btn_clear)
-        btns.addStretch(1)
-        lay.addLayout(btns)
-
-        self.btn_remove.clicked.connect(self.remove_selected)
-        self.btn_clear.clicked.connect(self.clear)
-        self.table.itemChanged.connect(self._on_item_changed)
-
-        self._refresh()
-
-    def points(self) -> Dict[str, np.ndarray]:
-        return {k: v.copy() for k, v in self._points.items()}
-
-    def upsert(self, label: str, xyz: np.ndarray):
-        label = str(label).strip()
-        if not label:
-            return
-        self._points[label] = np.asarray(xyz, dtype=float).reshape(3,)
-        self._refresh()
-        self.changed.emit()
-
-    def remove_selected(self):
-        rows = sorted({it.row() for it in self.table.selectedItems()}, reverse=True)
-        if not rows:
-            return
-
-        labels = []
-        for r in rows:
-            it = self.table.item(r, 0)
-            if it:
-                labels.append(it.text().strip())
-
-        for lb in labels:
-            self._points.pop(lb, None)
-
-        self._refresh()
-        self.changed.emit()
-
-    def clear(self):
-        self._points.clear()
-        self._refresh()
-        self.changed.emit()
-
-    def _refresh(self):
-        self.table.blockSignals(True)
-
-        items = list(self._points.items())
-        self.table.setRowCount(len(items))
-
-        for i, (label, xyz) in enumerate(items):
-            self.table.setItem(i, 0, QtWidgets.QTableWidgetItem(str(label)))
-            self.table.setItem(i, 1, QtWidgets.QTableWidgetItem(f"{float(xyz[0]):.6f}"))
-            self.table.setItem(i, 2, QtWidgets.QTableWidgetItem(f"{float(xyz[1]):.6f}"))
-            self.table.setItem(i, 3, QtWidgets.QTableWidgetItem(f"{float(xyz[2]):.6f}"))
-
-        # set editability: label editable, coords read-only
-        for r in range(self.table.rowCount()):
-            it0 = self.table.item(r, 0)
-            it0.setFlags(it0.flags() | QtCore.Qt.ItemIsEditable)
-            for c in (1, 2, 3):
-                it = self.table.item(r, c)
-                it.setFlags(it.flags() & ~QtCore.Qt.ItemIsEditable)
-
-        self.table.blockSignals(False)
-
-    def _on_item_changed(self, item: QtWidgets.QTableWidgetItem):
-        # only label edits
-        if item.column() != 0:
-            return
-
-        rebuilt: Dict[str, np.ndarray] = {}
-        labels = []
-
-        for r in range(self.table.rowCount()):
-            lb = self.table.item(r, 0).text().strip()
-            if not lb:
-                QtWidgets.QMessageBox.warning(self, "Invalid label", "Labels cannot be empty.")
-                self._refresh()
-                return
-            labels.append(lb)
-
-            x = float(self.table.item(r, 1).text())
-            y = float(self.table.item(r, 2).text())
-            z = float(self.table.item(r, 3).text())
-            rebuilt[lb] = np.array([x, y, z], dtype=float)
-
-        if len(set(labels)) != len(labels):
-            QtWidgets.QMessageBox.warning(self, "Duplicate labels", "Two points share the same label. Please fix.")
-            self._refresh()
-            return
-
-        self._points = rebuilt
-        self.changed.emit()
-
-
-# -------------------------
-# Dialog: single-image -> 3D -> commit buffered points into dataset
+# Dialog: single-image -> 3D -> buffered points -> OK commits
 # -------------------------
 class SingleImage3DDialog(QtWidgets.QDialog):
     """
@@ -332,11 +224,13 @@ class SingleImage3DDialog(QtWidgets.QDialog):
       - Load image
       - Run depth estimation -> point cloud
       - Optional: set scale using 2D clicks + known distance (mm)
-      - Click points in 3D -> prompt label -> add to BUFFER (editable/removable)
-      - OK commits buffered points into ds.points
+      - Click points in 3D -> prompt label -> add to PENDING buffer (editable)
+      - OK commits pending points into ds.points; Cancel discards
+
+    After OK, ds.points has new/updated points.
     """
 
-    def __init__(self, ds, parent=None):
+    def __init__(self, ds, on_dataset_changed_callback=None, parent=None):
         super().__init__(parent)
 
         if not HAS_MPL:
@@ -348,10 +242,11 @@ class SingleImage3DDialog(QtWidgets.QDialog):
             raise RuntimeError("Matplotlib missing")
 
         self.ds = ds
+        self.on_dataset_changed_callback = on_dataset_changed_callback
 
-        self.setWindowTitle("Single Image → Depth → 3D → Pick points (OK to commit)")
+        self.setWindowTitle("Single Image → Depth → 3D → Collect points (OK commits)")
         self.setModal(True)
-        self.resize(1400, 760)
+        self.resize(1350, 780)
 
         self.image_path: Optional[str] = None
         self.img_rgb: Optional[np.ndarray] = None
@@ -359,7 +254,15 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         self.K: Optional[CameraIntrinsics] = None
         self.xyz: Optional[np.ndarray] = None
 
-        # controls
+        self._estimator: Optional[DepthEstimator] = None
+
+        # Buffered points (pending until OK)
+        self._pending_points: Dict[str, np.ndarray] = {}
+        self._pending_order: list[str] = []  # for "undo last"
+
+        # -------------------------
+        # Controls (top bar)
+        # -------------------------
         self.btn_load = QtWidgets.QPushButton("Load image…")
         self.btn_run = QtWidgets.QPushButton("Run depth + reconstruct")
         self.btn_scale = QtWidgets.QPushButton("Set scale (2D clicks)")
@@ -386,14 +289,10 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         self.scale_mm_spin.setValue(10.0)
         self.scale_mm_spin.setSuffix(" mm")
 
-        self.status = QtWidgets.QLabel("Load an image, run reconstruction, click 3D points, then press OK to commit.")
+        self.status = QtWidgets.QLabel(
+            "Load an image, run reconstruction, then click 3D points to add them to the pending list. OK commits."
+        )
         self.status.setWordWrap(True)
-
-        self.picker = PointCloudPicker3D()
-        self.picker.picked.connect(self._on_picked_xyz)
-
-        self.points_panel = PickedPointsPanel()
-        self.points_panel.changed.connect(self._update_status)
 
         top = QtWidgets.QGridLayout()
         top.addWidget(self.btn_load, 0, 0)
@@ -409,39 +308,88 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         top.addWidget(self.scale_mm_spin, 1, 4)
         top.addWidget(self.btn_scale, 1, 5)
 
-        split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-        split.addWidget(self.picker)
-        split.addWidget(self.points_panel)
-        split.setSizes([950, 450])
+        # -------------------------
+        # Main area: picker + pending table
+        # -------------------------
+        self.picker = PointCloudPicker3D()
+        self.picker.picked.connect(self._on_picked_xyz)
 
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self._on_ok)
-        buttons.rejected.connect(self.reject)
+        self.pending_table = QtWidgets.QTableWidget()
+        self.pending_table.setColumnCount(4)
+        self.pending_table.setHorizontalHeaderLabels(["label", "x (m)", "y (m)", "z (m)"])
+        self.pending_table.horizontalHeader().setStretchLastSection(True)
+        self.pending_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.pending_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
 
+        self.btn_rename = QtWidgets.QPushButton("Rename")
+        self.btn_delete = QtWidgets.QPushButton("Delete")
+        self.btn_undo = QtWidgets.QPushButton("Undo last")
+        self.btn_clear = QtWidgets.QPushButton("Clear all")
+
+        self.btn_rename.setEnabled(False)
+        self.btn_delete.setEnabled(False)
+        self.btn_undo.setEnabled(False)
+        self.btn_clear.setEnabled(False)
+
+        self.pending_table.itemSelectionChanged.connect(self._on_pending_selection_changed)
+        self.btn_rename.clicked.connect(self._rename_selected)
+        self.btn_delete.clicked.connect(self._delete_selected)
+        self.btn_undo.clicked.connect(self._undo_last)
+        self.btn_clear.clicked.connect(self._clear_all)
+
+        right_btns = QtWidgets.QHBoxLayout()
+        right_btns.addWidget(self.btn_rename)
+        right_btns.addWidget(self.btn_delete)
+        right_btns.addWidget(self.btn_undo)
+        right_btns.addWidget(self.btn_clear)
+
+        right = QtWidgets.QVBoxLayout()
+        right.addWidget(QtWidgets.QLabel("<b>Pending points (OK commits)</b>"))
+        right.addWidget(self.pending_table)
+        right.addLayout(right_btns)
+
+        right_widget = QtWidgets.QWidget()
+        right_widget.setLayout(right)
+
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        splitter.addWidget(self.picker)
+        splitter.addWidget(right_widget)
+        splitter.setSizes([900, 420])
+
+        # -------------------------
+        # OK/Cancel
+        # -------------------------
+        self.btn_ok = QtWidgets.QPushButton("OK (commit to dataset)")
+        self.btn_cancel = QtWidgets.QPushButton("Cancel (discard)")
+        self.btn_ok.setEnabled(False)
+
+        bottom = QtWidgets.QHBoxLayout()
+        bottom.addWidget(self.status, 1)
+        bottom.addWidget(self.btn_cancel)
+        bottom.addWidget(self.btn_ok)
+
+        # -------------------------
+        # Layout
+        # -------------------------
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(top)
-        layout.addWidget(split)
-        layout.addWidget(self.status)
-        layout.addWidget(buttons)
+        layout.addWidget(splitter, 1)
+        layout.addLayout(bottom)
 
+        # -------------------------
+        # Wiring
+        # -------------------------
         self.btn_load.clicked.connect(self._load_image)
         self.btn_run.clicked.connect(self._run_depth)
         self.btn_scale.clicked.connect(self._set_scale)
+        self.btn_ok.clicked.connect(self._commit_and_accept)
+        self.btn_cancel.clicked.connect(self.reject)
 
-        self._estimator: Optional[DepthEstimator] = None
-        self._update_status()
+        self._refresh_pending_table()
 
-    def buffered_points(self) -> Dict[str, np.ndarray]:
-        """Return buffered points without committing."""
-        return self.points_panel.points()
-
-    def _update_status(self):
-        n = len(self.points_panel.points())
-        extra = ""
-        if self.image_path:
-            extra = f" | image: {os.path.basename(self.image_path)}"
-        self.status.setText(f"Buffered points: {n}{extra}. Pick points in 3D; edit/remove in table; OK commits.")
-
+    # -------------------------
+    # Image / depth / reconstruction
+    # -------------------------
     def _load_image(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Select surgical image", "", "Images (*.png *.jpg *.jpeg *.tif *.tiff);;All files (*)"
@@ -465,7 +413,6 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         self.xyz = None
         self.btn_scale.setEnabled(False)
 
-        self.points_panel.clear()
         self.status.setText(f"Loaded: {os.path.basename(path)} ({w}×{h}). Now run depth + reconstruct.")
 
     def _run_depth(self):
@@ -487,24 +434,25 @@ class SingleImage3DDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.critical(self, "Depth estimation error", str(e))
             return
 
+        # relative depth -> pseudo metric depth (meters-ish)
         depth_rel = robust_norm_depth(depth_raw)
-        self.depth_m = 0.2 + 0.8 * depth_rel  # baseline scaling; refined by user scale
+        depth_m = 0.2 + 0.8 * depth_rel  # baseline scaling; refined by user scaling if desired
+        self.depth_m = depth_m
 
-        xyz, _uv = backproject(self.depth_m, self.K, stride=int(self.stride_spin.value()))
+        xyz, _uv = backproject(depth_m, self.K, stride=int(self.stride_spin.value()))
         self.xyz = xyz
-        self.picker.set_xyz(xyz)
 
+        self.picker.set_xyz(xyz)
         self.btn_scale.setEnabled(True)
-        self._update_status()
+        self.status.setText(
+            "Reconstruction ready. Optional: set scale. Then click points in 3D; each click asks for a label and adds it to the pending list."
+        )
 
     def _set_scale(self):
         if self.img_rgb is None or self.depth_m is None or self.K is None:
             return
 
-        if plt is None:
-            QtWidgets.QMessageBox.critical(self, "Missing dependency", "Matplotlib is required for scaling.")
-            return
-
+        # 2D clicks on image
         plt.figure(figsize=(10, 6))
         plt.imshow(self.img_rgb)
         plt.title("Click TWO points with known real distance (close window after selecting).")
@@ -536,7 +484,7 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         self.xyz = xyz
         self.picker.set_xyz(xyz)
 
-        self.status.setText(f"Scale applied: ×{scale:.6f}. Continue picking points; then press OK to commit.")
+        self.status.setText(f"Scale applied: ×{scale:.6f}. Continue clicking 3D points to add them to the pending list.")
 
     def _pixel_to_xyz(self, u: float, v: float) -> np.ndarray:
         assert self.depth_m is not None and self.K is not None
@@ -547,12 +495,20 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         if not np.isfinite(z) or z <= 0:
             raise ValueError("Invalid depth at selected pixel.")
 
-        x = (ui - self.K.cx) * z / self.K.fx
-        y = (vi - self.K.cy) * z / self.K.fy
+        x = (ui - self.K.cx) * z / K.fx  # type: ignore[name-defined]
+        y = (vi - self.K.cy) * z / K.fy  # type: ignore[name-defined]
         return np.array([x, y, z], dtype=float)
 
+    # -------------------------
+    # Pending points editing
+    # -------------------------
     def _on_picked_xyz(self, xyz):
-        label, ok = QtWidgets.QInputDialog.getText(self, "Label point", "Label for this point (unique):")
+        if self.xyz is None:
+            return
+
+        label, ok = QtWidgets.QInputDialog.getText(
+            self, "Label point", "Label for this point (pending until OK):"
+        )
         if not ok:
             return
 
@@ -560,44 +516,174 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         if not label:
             return
 
-        if label in self.points_panel.points():
+        if label in self._pending_points:
             resp = QtWidgets.QMessageBox.question(
                 self,
-                "Overwrite buffer point?",
-                f"Point '{label}' already exists in the buffer. Overwrite it?",
+                "Overwrite pending?",
+                f"Pending point '{label}' already exists. Overwrite it?",
                 QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             )
             if resp != QtWidgets.QMessageBox.Yes:
                 return
 
-        self.points_panel.upsert(label, np.asarray(xyz, dtype=float).reshape(3,))
-        self._update_status()
+        arr = np.asarray(xyz, dtype=float).reshape(3,)
+        self._pending_points[label] = arr
 
-    def _on_ok(self):
-        pts = self.points_panel.points()
-        if not pts:
+        # track order for undo-last
+        if label in self._pending_order:
+            self._pending_order.remove(label)
+        self._pending_order.append(label)
+
+        self.status.setText(f"Pending: {label} -> ({arr[0]:.4f}, {arr[1]:.4f}, {arr[2]:.4f})")
+        self._refresh_pending_table()
+
+    def _refresh_pending_table(self):
+        labels = sorted(self._pending_points.keys())
+        self.pending_table.setRowCount(len(labels))
+
+        for r, lb in enumerate(labels):
+            p = self._pending_points[lb]
+            it0 = QtWidgets.QTableWidgetItem(lb)
+            it1 = QtWidgets.QTableWidgetItem(f"{float(p[0]):.6f}")
+            it2 = QtWidgets.QTableWidgetItem(f"{float(p[1]):.6f}")
+            it3 = QtWidgets.QTableWidgetItem(f"{float(p[2]):.6f}")
+
+            for it in (it0, it1, it2, it3):
+                it.setFlags(it.flags() & ~QtCore.Qt.ItemIsEditable)
+
+            self.pending_table.setItem(r, 0, it0)
+            self.pending_table.setItem(r, 1, it1)
+            self.pending_table.setItem(r, 2, it2)
+            self.pending_table.setItem(r, 3, it3)
+
+        has_any = len(self._pending_points) > 0
+        self.btn_clear.setEnabled(has_any)
+        self.btn_undo.setEnabled(len(self._pending_order) > 0)
+        self.btn_ok.setEnabled(has_any)
+
+        self._on_pending_selection_changed()
+
+    def _selected_label(self) -> Optional[str]:
+        sel = self.pending_table.selectionModel().selectedRows()
+        if not sel:
+            return None
+        row = int(sel[0].row())
+        it = self.pending_table.item(row, 0)
+        if it is None:
+            return None
+        return it.text().strip() or None
+
+    def _on_pending_selection_changed(self):
+        lb = self._selected_label()
+        enabled = lb is not None and lb in self._pending_points
+        self.btn_rename.setEnabled(enabled)
+        self.btn_delete.setEnabled(enabled)
+
+    def _rename_selected(self):
+        old = self._selected_label()
+        if not old or old not in self._pending_points:
+            return
+
+        new, ok = QtWidgets.QInputDialog.getText(self, "Rename point", f"New label for '{old}':")
+        if not ok:
+            return
+        new = (new or "").strip()
+        if not new or new == old:
+            return
+
+        if new in self._pending_points:
+            QtWidgets.QMessageBox.warning(self, "Rename error", f"Label '{new}' already exists in pending points.")
+            return
+
+        self._pending_points[new] = self._pending_points.pop(old)
+
+        if old in self._pending_order:
+            idx = self._pending_order.index(old)
+            self._pending_order[idx] = new
+
+        self.status.setText(f"Renamed pending point: {old} → {new}")
+        self._refresh_pending_table()
+
+    def _delete_selected(self):
+        lb = self._selected_label()
+        if not lb or lb not in self._pending_points:
+            return
+        resp = QtWidgets.QMessageBox.question(
+            self, "Delete pending point", f"Delete '{lb}' from pending points?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
+        )
+        if resp != QtWidgets.QMessageBox.Yes:
+            return
+
+        self._pending_points.pop(lb, None)
+        if lb in self._pending_order:
+            self._pending_order = [x for x in self._pending_order if x != lb]
+
+        self.status.setText(f"Deleted pending point: {lb}")
+        self._refresh_pending_table()
+
+    def _undo_last(self):
+        if not self._pending_order:
+            return
+        last = self._pending_order.pop()
+        if last in self._pending_points:
+            self._pending_points.pop(last, None)
+            self.status.setText(f"Undo last: removed '{last}'")
+            self._refresh_pending_table()
+
+    def _clear_all(self):
+        resp = QtWidgets.QMessageBox.question(
+            self, "Clear all", "Clear ALL pending points?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
+        )
+        if resp != QtWidgets.QMessageBox.Yes:
+            return
+        self._pending_points.clear()
+        self._pending_order.clear()
+        self.status.setText("Cleared all pending points.")
+        self._refresh_pending_table()
+
+    # -------------------------
+    # Commit / accept
+    # -------------------------
+    def _commit_and_accept(self):
+        if not self._pending_points:
+            QtWidgets.QMessageBox.information(self, "Nothing to commit", "No pending points to commit.")
+            return
+
+        # confirm overwrites against existing dataset points
+        overwriting = [lb for lb in self._pending_points.keys() if lb in getattr(self.ds, "points", {})]
+        if overwriting:
             resp = QtWidgets.QMessageBox.question(
                 self,
-                "No points selected",
-                "You have not selected any points. Continue anyway?",
+                "Overwrite existing dataset points?",
+                "The following labels already exist in the dataset and will be overwritten:\n\n"
+                + "\n".join(overwriting)
+                + "\n\nProceed?",
                 QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             )
             if resp != QtWidgets.QMessageBox.Yes:
                 return
 
-        for label, xyz in pts.items():
-            if label in self.ds.points:
-                resp = QtWidgets.QMessageBox.question(
-                    self,
-                    "Overwrite dataset point?",
-                    f"Point '{label}' exists in dataset. Overwrite it?",
-                    QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                )
-                if resp != QtWidgets.QMessageBox.Yes:
-                    continue
-            self.ds.points[label] = np.asarray(xyz, dtype=float).reshape(3,)
+        # commit
+        for lb, p in self._pending_points.items():
+            self.ds.points[lb] = np.asarray(p, dtype=float).reshape(3,)
 
         if isinstance(getattr(self.ds, "meta", None), dict):
             self.ds.meta["source"] = "single_image_depth"
 
+        if callable(self.on_dataset_changed_callback):
+            try:
+                self.on_dataset_changed_callback()
+            except Exception:
+                pass
+
         self.accept()
+
+
+# -------------------------
+# BUGFIX NOTE
+# -------------------------
+# If you see "QTextCursor::setPosition: Position '1' out of range",
+# it is NOT from this module (we do not touch QTextCursor).
+# It is usually from a QPlainTextEdit/QTextEdit cursor positioning on empty documents in app.py.
