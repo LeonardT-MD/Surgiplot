@@ -1,0 +1,17 @@
+name: surgiplot_master
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy=1.26
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - pyside6=6.10.*
+  - qt6-main=6.10.*
+  - pytorch=2.10.*
+  - torchvision
+  - torchaudio
+  - pip
+  - pip:
+      - -e ".[gui,ai]"
