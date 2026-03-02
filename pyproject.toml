@@ -19,6 +19,20 @@ dependencies = [
   "matplotlib"
 ]
 
+[project.optional-dependencies]
+gui = [
+  "matplotlib>=3.8",
+  "PySide6>=6.6",
+]
+ai = [
+  "transformers>=4.40",
+  "huggingface-hub>=0.20",
+  "safetensors>=0.4",
+  "tokenizers>=0.15",
+  "Pillow>=10",
+  "accelerate>=0.25",
+]
+
 [project.scripts]
 surgiplot = "surgiplot.cli.app:main"
 surgiplot_gui = "surgiplot.gui.app:main"
