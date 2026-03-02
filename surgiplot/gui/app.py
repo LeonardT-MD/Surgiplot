@@ -3,41 +3,25 @@ surgiplot.gui.app
 
 Surgiplot GUI — single-file app (copy-paste ready)
 
-What this file contains:
-- A working Qt (PySide6) GUI entrypoint with `main()` (fixes your ImportError).
-- Dataset loading (CSV/JSON via your loader), manual point loading, and point table editing.
-- Metric computation + plotting hooks for:
-  - AoA/SF (AOA_SF)
-  - VOM/VoA (VOM_VOA)
-  - AoE (AOE)
-  - Distance (DISTANCE_3D)
-  - Area (AREA_3D)
-- Optional “Single image → Depth → 3D point picking” dialog (kept separated in
-  `surgiplot.ai.single_image_depth` as you intended). If that module/deps are missing,
-  the GUI still runs and simply disables that feature.
+Contains:
+- Qt (PySide6) GUI entrypoint with `main()` (fixes console script import).
+- Dataset loading + manual point loading + table display
+- Metric computation hooks (AOA_SF, VOM_VOA, AOE, DISTANCE_3D, AREA_3D)
+- Optional "Single image → 3D points…" dialog from `surgiplot.ai.single_image_depth`
+- Optional matplotlib 3D plotting
 
-Assumptions about your package (based on your repo history):
-- `load_dataset`, `load_points_from_manual` exist in `surgiplot.core.io.loaders`
-- Metrics classes/functions exist in `surgiplot.metrics`:
-  `VOM_VOA, AOA_SF, AOE, DISTANCE_3D, AREA_3D`
-- Your dataset object has at least:
-  - `ds.points` : dict[str, np.ndarray shape (3,)]
-  - optionally `ds.meta` : dict
-  - optionally `ds.name` / `ds.path`
-
-If your dataset class differs, adjust only the tiny adapter methods in DatasetPanel.
+IMPORTANT PySide6/Qt6:
+- QAction is in QtGui, NOT QtWidgets.
 """
 
 from __future__ import annotations
 
-import os
 import sys
 import traceback
-from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, Optional, Any
 
 import numpy as np
-from PySide6 import QtWidgets, QtCore
+from PySide6 import QtWidgets, QtCore, QtGui
 
 # -------------------------
 # Core project imports
@@ -45,7 +29,7 @@ from PySide6 import QtWidgets, QtCore
 from surgiplot.core.io.loaders import load_dataset, load_points_from_manual
 from surgiplot.metrics import VOM_VOA, AOA_SF, AOE, DISTANCE_3D, AREA_3D
 
-# Optional AI dialog (kept separate on purpose)
+# Optional AI dialog (kept separate)
 try:
     from surgiplot.ai.single_image_depth import SingleImage3DDialog  # feature-only
     HAS_SINGLE_IMAGE_3D = True
@@ -54,7 +38,7 @@ except Exception:
     HAS_SINGLE_IMAGE_3D = False
 
 # -------------------------
-# Matplotlib (optional but strongly recommended)
+# Matplotlib (optional)
 # -------------------------
 try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -68,7 +52,7 @@ except Exception:
 
 
 # =============================================================================
-# Small helpers
+# Helpers
 # =============================================================================
 def _exc_text() -> str:
     return traceback.format_exc()
@@ -93,12 +77,6 @@ def _as_xyz(arr: Any) -> np.ndarray:
 # Plot panel
 # =============================================================================
 class PlotPanel(QtWidgets.QWidget):
-    """
-    A simple matplotlib viewer with multiple plotting utilities.
-    Your metric classes should provide their own plotting methods; this panel
-    calls them if available, otherwise falls back to minimal visualization.
-    """
-
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -113,6 +91,8 @@ class PlotPanel(QtWidgets.QWidget):
             self.fig = None
             self.canvas = None
             self.ax = None
+            self._title = QtWidgets.QLabel("")
+            lay.addWidget(self._title)
             return
 
         self.fig = Figure(figsize=(6, 5))
@@ -126,6 +106,7 @@ class PlotPanel(QtWidgets.QWidget):
 
     def clear(self, title: str = ""):
         if not HAS_MPL:
+            self._title.setText(title or "")
             return
         self.fig.clear()
         self.ax = self.fig.add_subplot(111, projection="3d")
@@ -134,7 +115,9 @@ class PlotPanel(QtWidgets.QWidget):
 
     def plot_points(self, points: Dict[str, np.ndarray], title: str = "Dataset points"):
         if not HAS_MPL:
+            self._title.setText("Plot disabled (matplotlib missing).")
             return
+
         self.clear(title)
 
         if not points:
@@ -156,18 +139,13 @@ class PlotPanel(QtWidgets.QWidget):
         self.canvas.draw_idle()
 
     def plot_metric_result(self, result: Any, title: str = "Metric result"):
-        """
-        Tries a few conventions:
-        - if result has `plot(ax=...)` or `plot(ax)` method
-        - else if result has `fig`/`ax`
-        - else prints as text in title
-        """
         if not HAS_MPL:
+            self._title.setText(f"{title}\n\n{result!r}")
             return
 
         self.clear(title)
 
-        # 1) result.plot(ax=...)
+        # Try `result.plot(ax=...)` or `result.plot(ax)`
         try:
             if hasattr(result, "plot"):
                 try:
@@ -175,28 +153,25 @@ class PlotPanel(QtWidgets.QWidget):
                     self.canvas.draw_idle()
                     return
                 except TypeError:
-                    # maybe result.plot(ax) signature
                     result.plot(self.ax)
                     self.canvas.draw_idle()
                     return
         except Exception:
             pass
 
-        # 2) If metric object returns a dict with points/lines
+        # If dict with "points"
         if isinstance(result, dict):
-            # common keys: "points", "lines"
             pts = result.get("points", None)
             if isinstance(pts, dict):
                 self.plot_points(pts, title=title)
                 return
 
-        # 3) Fallback: show dataset text
         self._title.setText(f"{title}\n\n{result!r}")
         self.canvas.draw_idle()
 
 
 # =============================================================================
-# Dataset panel (load/edit points)
+# Dataset panel
 # =============================================================================
 class DatasetPanel(QtWidgets.QWidget):
     dataset_changed = QtCore.Signal()
@@ -204,7 +179,7 @@ class DatasetPanel(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.ds = None  # dataset object
+        self.ds = None
 
         self.lbl_path = QtWidgets.QLabel("No dataset loaded.")
         self.lbl_path.setWordWrap(True)
@@ -227,7 +202,6 @@ class DatasetPanel(QtWidgets.QWidget):
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
 
-        # Layout
         top = QtWidgets.QHBoxLayout()
         top.addWidget(self.btn_load)
         top.addWidget(self.btn_load_manual)
@@ -247,20 +221,16 @@ class DatasetPanel(QtWidgets.QWidget):
         lay.addLayout(mid)
         lay.addWidget(self.table, 1)
 
-        # Wiring
         self.btn_load.clicked.connect(self._on_load_dataset)
         self.btn_load_manual.clicked.connect(self._on_load_manual_points)
         self.btn_save_points.clicked.connect(self._on_export_points)
         self.btn_clear_points.clicked.connect(self._on_clear_points)
-
         self.btn_add_point.clicked.connect(self._on_add_point)
         self.btn_del_point.clicked.connect(self._on_delete_selected)
-
         self.btn_single_image_3d.clicked.connect(self._on_single_image_3d)
 
         self._refresh()
 
-    # ---- dataset IO
     def _on_load_dataset(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
@@ -349,7 +319,6 @@ class DatasetPanel(QtWidgets.QWidget):
         self._refresh()
         self.dataset_changed.emit()
 
-    # ---- point editing
     def _on_add_point(self):
         if self.ds is None:
             QtWidgets.QMessageBox.warning(self, "No dataset", "Load a dataset first.")
@@ -361,11 +330,7 @@ class DatasetPanel(QtWidgets.QWidget):
         if not label:
             return
 
-        xyz_text, ok = QtWidgets.QInputDialog.getText(
-            self,
-            "Point coordinates",
-            "Enter x,y,z (comma-separated):",
-        )
+        xyz_text, ok = QtWidgets.QInputDialog.getText(self, "Point coordinates", "Enter x,y,z (comma-separated):")
         if not ok:
             return
         try:
@@ -399,10 +364,7 @@ class DatasetPanel(QtWidgets.QWidget):
         if not lb:
             return
         resp = QtWidgets.QMessageBox.question(
-            self,
-            "Delete point",
-            f"Delete point '{lb}'?",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            self, "Delete point", f"Delete point '{lb}'?", QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
         )
         if resp != QtWidgets.QMessageBox.Yes:
             return
@@ -410,14 +372,13 @@ class DatasetPanel(QtWidgets.QWidget):
         self._refresh()
         self.dataset_changed.emit()
 
-    # ---- optional single-image 3D picker
     def _on_single_image_3d(self):
         if not HAS_SINGLE_IMAGE_3D:
             QtWidgets.QMessageBox.information(
                 self,
                 "Feature not available",
-                "Single-image 3D feature is not available in this environment.\n"
-                "Make sure `surgiplot.ai.single_image_depth` exists and its dependencies are installed.",
+                "Single-image 3D feature is not available.\n"
+                "Ensure `surgiplot.ai.single_image_depth` exists and deps are installed.",
             )
             return
         if self.ds is None:
@@ -431,7 +392,6 @@ class DatasetPanel(QtWidgets.QWidget):
         self._refresh()
         self.dataset_changed.emit()
 
-    # ---- refresh table
     def _refresh(self):
         if self.ds is None:
             self.lbl_path.setText("No dataset loaded.")
@@ -463,11 +423,8 @@ class DatasetPanel(QtWidgets.QWidget):
             it1 = QtWidgets.QTableWidgetItem(f"{float(p[0]):.6f}")
             it2 = QtWidgets.QTableWidgetItem(f"{float(p[1]):.6f}")
             it3 = QtWidgets.QTableWidgetItem(f"{float(p[2]):.6f}")
-
-            # read-only cells
             for it in (it0, it1, it2, it3):
                 it.setFlags(it.flags() & ~QtCore.Qt.ItemIsEditable)
-
             self.table.setItem(r, 0, it0)
             self.table.setItem(r, 1, it1)
             self.table.setItem(r, 2, it2)
@@ -475,13 +432,9 @@ class DatasetPanel(QtWidgets.QWidget):
 
 
 # =============================================================================
-# Metric panel (compute & plot)
+# Metric panel
 # =============================================================================
 class MetricPanel(QtWidgets.QWidget):
-    """
-    UI to compute different metrics using your `surgiplot.metrics` classes.
-    """
-
     def __init__(self, dataset_panel: DatasetPanel, plot_panel: PlotPanel, parent=None):
         super().__init__(parent)
         self.dataset_panel = dataset_panel
@@ -493,21 +446,15 @@ class MetricPanel(QtWidgets.QWidget):
         self.btn_compute = QtWidgets.QPushButton("Compute")
         self.btn_plot_points = QtWidgets.QPushButton("Plot points")
 
-        # VOM/VoA options (kept minimal but compatible with your recent work)
         self.grp_vom = QtWidgets.QGroupBox("VOM / VoA options")
         self.grp_vom.setCheckable(True)
         self.grp_vom.setChecked(False)
 
-        self.chk_polygons = QtWidgets.QCheckBox("Polygons")
-        self.chk_polygons.setChecked(True)
-        self.chk_ellipses = QtWidgets.QCheckBox("Ellipses")
-        self.chk_ellipses.setChecked(True)
-        self.chk_distance = QtWidgets.QCheckBox("Target distance vector")
-        self.chk_distance.setChecked(True)
-        self.chk_vom = QtWidgets.QCheckBox("VOM")
-        self.chk_vom.setChecked(True)
-        self.chk_svom = QtWidgets.QCheckBox("sVOM (10 mm)")
-        self.chk_svom.setChecked(True)
+        self.chk_polygons = QtWidgets.QCheckBox("Polygons"); self.chk_polygons.setChecked(True)
+        self.chk_ellipses = QtWidgets.QCheckBox("Ellipses"); self.chk_ellipses.setChecked(True)
+        self.chk_distance = QtWidgets.QCheckBox("Target distance vector"); self.chk_distance.setChecked(True)
+        self.chk_vom = QtWidgets.QCheckBox("VOM"); self.chk_vom.setChecked(True)
+        self.chk_svom = QtWidgets.QCheckBox("sVOM (10 mm)"); self.chk_svom.setChecked(True)
 
         self.spin_slices = QtWidgets.QSpinBox()
         self.spin_slices.setRange(5, 400)
@@ -535,7 +482,6 @@ class MetricPanel(QtWidgets.QWidget):
         self.txt_out.setReadOnly(True)
         lay.addWidget(self.txt_out, 1)
 
-        # wiring
         self.btn_compute.clicked.connect(self.compute_current)
         self.btn_plot_points.clicked.connect(self.plot_points)
 
@@ -547,8 +493,7 @@ class MetricPanel(QtWidgets.QWidget):
         if ds is None:
             QtWidgets.QMessageBox.warning(self, "No dataset", "Load a dataset first.")
             return
-        pts = _ensure_points_dict(ds)
-        self.plot_panel.plot_points(pts, title="Dataset points")
+        self.plot_panel.plot_points(_ensure_points_dict(ds), title="Dataset points")
 
     def compute_current(self):
         ds = self._ds()
@@ -566,7 +511,7 @@ class MetricPanel(QtWidgets.QWidget):
         try:
             if metric_name == "AoA / SF":
                 metric = AOA_SF()
-                result = metric.compute(pts) if hasattr(metric, "compute") else metric(pts)  # support both styles
+                result = metric.compute(pts) if hasattr(metric, "compute") else metric(pts)
                 self._show_result("AOA_SF", result)
                 self.plot_panel.plot_metric_result(result, title="AoA / SF")
                 return
@@ -581,12 +526,10 @@ class MetricPanel(QtWidgets.QWidget):
                     show_svom=bool(self.chk_svom.isChecked()),
                     slices=int(self.spin_slices.value()),
                 )
-                # support either compute(points, **opts) or compute(ds, **opts)
                 if hasattr(metric, "compute"):
                     try:
                         result = metric.compute(pts, **toggles)
                     except TypeError:
-                        # maybe it wants dataset
                         result = metric.compute(ds, **toggles)
                 else:
                     result = metric(pts, **toggles)
@@ -621,7 +564,6 @@ class MetricPanel(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "Metric computation failed", f"{e}\n\n{_exc_text()}")
 
     def _show_result(self, title: str, result: Any):
-        # Pretty-print common result shapes.
         out_lines = [f"{title} result:"]
         if isinstance(result, dict):
             for k in sorted(result.keys()):
@@ -648,10 +590,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plot_panel = PlotPanel()
         self.metric_panel = MetricPanel(self.dataset_panel, self.plot_panel)
 
-        # Update plot when dataset changes (optional)
         self.dataset_panel.dataset_changed.connect(self._on_dataset_changed)
 
-        # Layout: left dataset + metrics, right plot
         left = QtWidgets.QSplitter(QtCore.Qt.Vertical)
         left.addWidget(self.dataset_panel)
         left.addWidget(self.metric_panel)
@@ -671,15 +611,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_menu(self):
         m = self.menuBar()
-
         file_menu = m.addMenu("&File")
-
-        act_quit = QtGuiAction("Quit", self, shortcut="Ctrl+Q", triggered=self.close)
-        file_menu.addAction(act_quit)
+        file_menu.addAction(QtGuiAction("Quit", self, shortcut="Ctrl+Q", triggered=self.close))
 
         help_menu = m.addMenu("&Help")
-        act_about = QtGuiAction("About", self, triggered=self._about)
-        help_menu.addAction(act_about)
+        help_menu.addAction(QtGuiAction("About", self, triggered=self._about))
 
     def _about(self):
         msg = (
@@ -691,7 +627,6 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QMessageBox.information(self, "About Surgiplot", msg)
 
     def _on_dataset_changed(self):
-        # optional: auto-plot points whenever dataset changes
         ds = self.dataset_panel.ds
         if ds is None:
             return
@@ -701,9 +636,11 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
 
 
-# Simple QAction wrapper to avoid QtGui import at top if you want
-class QtGuiAction(QtWidgets.QAction):
-    def __init__(self, text, parent=None, shortcut=None, triggered=None):
+# =============================================================================
+# QAction helper (FIXED: QAction is in QtGui)
+# =============================================================================
+class QtGuiAction(QtGui.QAction):
+    def __init__(self, text, parent=None, shortcut: Optional[str] = None, triggered=None):
         super().__init__(text, parent)
         if shortcut:
             self.setShortcut(shortcut)
@@ -712,7 +649,7 @@ class QtGuiAction(QtWidgets.QAction):
 
 
 # =============================================================================
-# Entry point (THIS fixes your ImportError)
+# Entry point (fixes console script import)
 # =============================================================================
 def main() -> None:
     app = QtWidgets.QApplication.instance()
@@ -721,7 +658,6 @@ def main() -> None:
 
     win = MainWindow()
     win.show()
-
     raise SystemExit(app.exec())
 
 
