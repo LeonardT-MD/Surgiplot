@@ -18,6 +18,11 @@ Notes:
 - ONLY when you click OK: pending points are committed into ds.points[label] = xyz.
 - Cancel rejects without modifying ds.
 
+Verbosity / debugging:
+- This module logs to `logging.getLogger("surgiplot")`.
+- Configure handlers/level in app.py to see INFO/DEBUG messages.
+- Logs model/device selection (CUDA/MPS/CPU), inference time, depth stats, point cloud size/bounds.
+
 Public API used by GUI:
 - class SingleImage3DDialog(QtWidgets.QDialog)
 
@@ -30,13 +35,18 @@ Typical use:
 
 from __future__ import annotations
 
+import logging
 import math
 import os
+import time
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
 import numpy as np
 from PySide6 import QtWidgets, QtCore
+
+logger = logging.getLogger("surgiplot")
+
 
 # Matplotlib is required for this feature. Keep it local to avoid breaking core GUI if missing.
 try:
@@ -50,6 +60,49 @@ except Exception:
     FigureCanvas = None  # type: ignore
     Figure = None  # type: ignore
     plt = None  # type: ignore
+
+
+# -------------------------
+# Logging helpers (safe)
+# -------------------------
+def _fmt_shape(a: Optional[np.ndarray]) -> str:
+    if a is None:
+        return "None"
+    try:
+        return f"{tuple(a.shape)} dtype={a.dtype}"
+    except Exception:
+        return "<?>"
+
+def _array_stats(a: np.ndarray) -> str:
+    a = np.asarray(a)
+    if a.size == 0:
+        return "empty"
+    finite = np.isfinite(a)
+    nf = int(finite.sum())
+    if nf == 0:
+        return f"size={a.size} finite=0 (all non-finite)"
+    af = a[finite]
+    return (
+        f"size={a.size} finite={nf} "
+        f"min={float(af.min()):.6g} max={float(af.max()):.6g} "
+        f"mean={float(af.mean()):.6g} std={float(af.std()):.6g}"
+    )
+
+def _bounds_xyz(xyz: np.ndarray) -> str:
+    xyz = np.asarray(xyz)
+    if xyz.size == 0:
+        return "empty"
+    finite = np.isfinite(xyz).all(axis=1)
+    if not finite.any():
+        return "all rows non-finite"
+    x = xyz[finite, 0]
+    y = xyz[finite, 1]
+    z = xyz[finite, 2]
+    return (
+        f"x=[{float(x.min()):.6g},{float(x.max()):.6g}] "
+        f"y=[{float(y.min()):.6g},{float(y.max()):.6g}] "
+        f"z=[{float(z.min()):.6g},{float(z.max()):.6g}]"
+    )
 
 
 # -------------------------
@@ -74,9 +127,21 @@ class CameraIntrinsics:
 def robust_norm_depth(d: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     """Robustly normalize depth-like values to [0, 1] using 1st-99th percentiles."""
     d = np.asarray(d, dtype=np.float32)
-    p1, p99 = np.percentile(d, [1, 99])
-    d = (d - p1) / (p99 - p1 + eps)
-    return np.clip(d, 0.0, 1.0)
+    if d.size == 0:
+        raise ValueError("Depth array is empty.")
+    if not np.isfinite(d).any():
+        raise ValueError("Depth array contains no finite values.")
+
+    finite = d[np.isfinite(d)]
+    p1, p99 = np.percentile(finite, [1, 99])
+    if not np.isfinite(p1) or not np.isfinite(p99):
+        raise ValueError("Cannot compute depth percentiles (non-finite).")
+    if abs(float(p99 - p1)) < 1e-12:
+        logger.warning("Depth percentiles are degenerate (p1≈p99). Returning zeros.")
+        return np.zeros_like(d, dtype=np.float32)
+
+    dn = (d - p1) / (p99 - p1 + eps)
+    return np.clip(dn, 0.0, 1.0)
 
 
 def backproject(depth_m: np.ndarray, K: CameraIntrinsics, stride: int = 3) -> Tuple[np.ndarray, np.ndarray]:
@@ -88,7 +153,13 @@ def backproject(depth_m: np.ndarray, K: CameraIntrinsics, stride: int = 3) -> Tu
       uv : (N,2) pixel coordinates for each 3D point
     """
     depth_m = np.asarray(depth_m, dtype=np.float32)
+    if depth_m.ndim != 2:
+        raise ValueError(f"depth_m must be 2D (H,W). Got {_fmt_shape(depth_m)}")
+
     h, w = depth_m.shape[:2]
+    stride = int(stride)
+    if stride < 1:
+        stride = 1
 
     ys = np.arange(0, h, stride, dtype=np.int32)
     xs = np.arange(0, w, stride, dtype=np.int32)
@@ -100,6 +171,9 @@ def backproject(depth_m: np.ndarray, K: CameraIntrinsics, stride: int = 3) -> Tu
 
     valid = np.isfinite(z) & (z > 1e-9)
     u, v, z = u[valid], v[valid], z[valid]
+
+    if z.size == 0:
+        return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 2), dtype=np.float32)
 
     x = (u - K.cx) * z / K.fx
     y = (v - K.cy) * z / K.fy
@@ -121,8 +195,10 @@ def _try_register_heif_opener() -> bool:
         import pillow_heif  # type: ignore
 
         pillow_heif.register_heif_opener()
+        logger.debug("Registered pillow-heif opener for HEIC/HEIF.")
         return True
-    except Exception:
+    except Exception as e:
+        logger.debug("pillow-heif not available or failed to register: %s", e)
         return False
 
 
@@ -156,7 +232,9 @@ def _open_image_rgb(path: str) -> np.ndarray:
 
     arr = np.array(img, dtype=np.uint8)
     if arr.ndim != 3 or arr.shape[2] != 3:
-        raise RuntimeError("Loaded image is not RGB; unexpected format.")
+        raise RuntimeError(f"Loaded image is not RGB; unexpected format: {_fmt_shape(arr)}")
+
+    logger.info("Loaded image: %s (%s)", os.path.basename(path), _fmt_shape(arr))
     return arr
 
 
@@ -178,11 +256,26 @@ class DepthEstimator:
     """
     Thin wrapper around transformers depth-estimation pipeline.
     Lazily loads the model.
+
+    Device selection:
+      - CUDA if available
+      - Else Apple Silicon MPS if available
+      - Else CPU
+
+    Optional env override:
+      SURGIPLOT_DEVICE = "cpu" | "mps" | "cuda"
+    For MPS unsupported ops fallback:
+      PYTORCH_ENABLE_MPS_FALLBACK=1
     """
 
     def __init__(self, model_id: str):
         self.model_id = model_id
         self._pipe = None
+        self._device_label = "cpu"
+
+    @property
+    def device_label(self) -> str:
+        return self._device_label
 
     def _ensure(self):
         if self._pipe is not None:
@@ -194,12 +287,82 @@ class DepthEstimator:
             raise RuntimeError("Missing dependency: transformers. Install with: pip install transformers") from e
 
         try:
-            import torch  # noqa: F401
+            import torch
         except Exception as e:
-            raise RuntimeError("Missing dependency: torch. Install CPU or CUDA torch first.") from e
+            raise RuntimeError("Missing dependency: torch. Install CPU/CUDA/MPS torch first.") from e
 
-        # pipeline handles device selection; users can configure torch/cuda externally.
-        self._pipe = pipeline(task="depth-estimation", model=self.model_id)
+        # Helpful diagnostics for first-run model download stalls
+        hf_home = (
+            os.environ.get("HF_HOME")
+            or os.environ.get("HUGGINGFACE_HUB_CACHE")
+            or os.environ.get("TRANSFORMERS_CACHE")
+        )
+        logger.info("Initializing depth pipeline. model_id=%s", self.model_id)
+        if hf_home:
+            logger.info("HF cache path env detected: %s", hf_home)
+        else:
+            logger.info("HF cache path env not set (default HF cache will be used).")
+
+        # ---- Device selection: CUDA > MPS > CPU
+        device = -1  # pipeline convention for CPU
+        device_label = "cpu"
+        use_fp16 = False
+
+        try:
+            if hasattr(torch, "cuda") and torch.cuda.is_available():
+                device = 0
+                device_label = "cuda:0"
+                use_fp16 = True  # usually beneficial on CUDA
+                logger.info("CUDA available: using %s", device_label)
+
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                # For MPS, recent transformers versions accept torch.device("mps")
+                device = torch.device("mps")
+                device_label = "mps"
+                use_fp16 = False  # keep float32 by default for robustness
+                logger.info("Apple Silicon MPS available: using %s", device_label)
+
+            else:
+                logger.info("No GPU backend available: using CPU")
+
+        except Exception as e:
+            logger.debug("Device detection failed (%s). Falling back to CPU.", e)
+            device = -1
+            device_label = "cpu"
+            use_fp16 = False
+
+        # Optional override without UI changes
+        forced = (os.environ.get("SURGIPLOT_DEVICE") or "").strip().lower()
+        if forced:
+            logger.info("SURGIPLOT_DEVICE override requested: %s", forced)
+            if forced == "cpu":
+                device, device_label, use_fp16 = -1, "cpu", False
+            elif forced == "mps":
+                device, device_label, use_fp16 = torch.device("mps"), "mps", False
+            elif forced.startswith("cuda"):
+                device, device_label, use_fp16 = 0, "cuda:0", True
+
+        model_kwargs = {}
+        if use_fp16:
+            model_kwargs["torch_dtype"] = torch.float16
+            logger.info("Using torch_dtype=float16 on %s", device_label)
+        else:
+            logger.info("Using torch_dtype=float32 on %s", device_label)
+
+        if device_label == "mps":
+            logger.info("Tip: if you see MPS unsupported op errors, set PYTORCH_ENABLE_MPS_FALLBACK=1")
+
+        t0 = time.perf_counter()
+        # Some older transformers versions may not support model_kwargs; if that fails we retry without it.
+        try:
+            self._pipe = pipeline(task="depth-estimation", model=self.model_id, device=device, model_kwargs=model_kwargs)
+        except TypeError:
+            logger.warning("transformers.pipeline does not accept model_kwargs in this environment. Retrying without model_kwargs.")
+            self._pipe = pipeline(task="depth-estimation", model=self.model_id, device=device)
+
+        dt = time.perf_counter() - t0
+        self._device_label = device_label
+        logger.info("Depth pipeline ready on %s (load time %.2fs).", device_label, dt)
 
     def predict_depth_raw(self, img_rgb: np.ndarray) -> np.ndarray:
         """Returns a 2D float32 array derived from the pipeline output depth image."""
@@ -210,10 +373,27 @@ class DepthEstimator:
         except Exception as e:
             raise RuntimeError("Missing dependency: pillow. Install with: pip install pillow") from e
 
-        img = Image.fromarray(np.asarray(img_rgb, dtype=np.uint8))
-        out = self._pipe(img)
+        img_rgb = np.asarray(img_rgb, dtype=np.uint8)
+        if img_rgb.ndim != 3 or img_rgb.shape[2] != 3:
+            raise ValueError(f"img_rgb must be RGB uint8 array. Got {_fmt_shape(img_rgb)}")
+
+        img = Image.fromarray(img_rgb)
+
+        logger.info("Running depth inference… (device=%s)", self._device_label)
+        logger.debug("Input image: %s", _fmt_shape(img_rgb))
+
+        t0 = time.perf_counter()
+        out = self._pipe(img)  # may download weights on first run
+        dt = time.perf_counter() - t0
+        logger.info("Depth inference completed in %.2fs.", dt)
+
+        if not isinstance(out, dict) or "depth" not in out:
+            raise RuntimeError(f"Unexpected pipeline output: {type(out)} keys={list(out.keys()) if isinstance(out, dict) else 'n/a'}")
+
         depth_img = out["depth"]
         depth_raw = np.array(depth_img).astype(np.float32)
+
+        logger.debug("Depth raw stats: %s", _array_stats(depth_raw))
         return depth_raw
 
 
@@ -261,6 +441,8 @@ class PointCloudPicker3D(QtWidgets.QWidget):
         self.ax.set_xlabel("X (m)")
         self.ax.set_ylabel("Y (m)")
         self.ax.set_zlabel("Z (m)")
+
+        logger.info("Plotting point cloud: N=%d (%s)", int(xyz.shape[0]), _bounds_xyz(xyz))
 
         # picker tolerance: increase if needed
         self._sc = self.ax.scatter(
@@ -453,6 +635,16 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         self._refresh_pending_table()
 
     # -------------------------
+    # Internal helper: status + log
+    # -------------------------
+    def _set_status(self, msg: str, level: int = logging.INFO):
+        self.status.setText(msg)
+        try:
+            logger.log(level, msg)
+        except Exception:
+            pass
+
+    # -------------------------
     # Image / depth / reconstruction
     # -------------------------
     def _load_image(self):
@@ -465,6 +657,7 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         try:
             self.img_rgb = _open_image_rgb(path)
         except Exception as e:
+            logger.exception("Cannot open image: %s", path)
             QtWidgets.QMessageBox.critical(self, "Cannot open image", str(e))
             return
 
@@ -475,8 +668,7 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         self.xyz = None
         self.btn_scale.setEnabled(False)
 
-        # Note: do not clear pending points automatically; user may want to keep them while swapping image.
-        self.status.setText(f"Loaded: {os.path.basename(path)} ({w}×{h}). Now run depth + reconstruct.")
+        self._set_status(f"Loaded: {os.path.basename(path)} ({w}×{h}). Now run depth + reconstruct.")
 
     def _run_depth(self):
         if self.img_rgb is None:
@@ -485,29 +677,62 @@ class SingleImage3DDialog(QtWidgets.QDialog):
 
         h, w = self.img_rgb.shape[:2]
         self.K = CameraIntrinsics(w, h, float(self.fov_spin.value()))
+        stride = int(self.stride_spin.value())
+        model_id = self.model_cb.currentText()
 
-        self.status.setText("Running depth estimation… (first time may download model)")
+        self._set_status("Running depth estimation… (first time may download model)")
         QtWidgets.QApplication.processEvents()
 
-        model_id = self.model_cb.currentText()
         try:
+            t0 = time.perf_counter()
             self._estimator = DepthEstimator(model_id)
             depth_raw = self._estimator.predict_depth_raw(self.img_rgb)
+            dt = time.perf_counter() - t0
+            logger.info("Total depth-estimation stage time: %.2fs (device=%s)", dt, self._estimator.device_label)
         except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "Depth estimation error", str(e))
+            logger.exception("Depth estimation failed.")
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Depth estimation error",
+                f"{e}\n\nTip: first run may be downloading the model. "
+                "Check terminal/logs for HuggingFace download/network errors."
+            )
+            return
+
+        try:
+            depth_rel = robust_norm_depth(depth_raw)
+        except Exception as e:
+            logger.exception("Depth normalization failed. Raw depth stats: %s", _array_stats(np.asarray(depth_raw)))
+            QtWidgets.QMessageBox.critical(self, "Depth post-processing error", str(e))
             return
 
         # relative depth -> pseudo metric depth (meters-ish)
-        depth_rel = robust_norm_depth(depth_raw)
         depth_m = 0.2 + 0.8 * depth_rel  # baseline scaling; refined by user scaling if desired
         self.depth_m = depth_m
+        logger.debug("Depth_m stats: %s", _array_stats(depth_m))
 
-        xyz, _uv = backproject(depth_m, self.K, stride=int(self.stride_spin.value()))
+        xyz, _uv = backproject(depth_m, self.K, stride=stride)
         self.xyz = xyz
+
+        if xyz.shape[0] == 0:
+            logger.error("Point cloud is empty after backprojection. depth_m stats: %s", _array_stats(depth_m))
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Reconstruction error",
+                "Point cloud is empty after reconstruction.\n\n"
+                "This usually means depth is invalid (all zeros/non-finite) or stride too large.\n"
+                "Try stride=1–3 and check logs."
+            )
+            return
+
+        if not np.isfinite(xyz).all():
+            n_bad = int((~np.isfinite(xyz).all(axis=1)).sum())
+            logger.warning("Point cloud contains non-finite rows: %d / %d", n_bad, xyz.shape[0])
 
         self.picker.set_xyz(xyz)
         self.btn_scale.setEnabled(True)
-        self.status.setText(
+
+        self._set_status(
             "Reconstruction ready. Optional: set scale. Then click points in 3D; each click asks for a label and adds it to the pending list."
         )
 
@@ -515,39 +740,59 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         if self.img_rgb is None or self.depth_m is None or self.K is None:
             return
 
+        if not HAS_MPL:
+            QtWidgets.QMessageBox.warning(self, "Missing dependency", "Matplotlib is required for 2D click scaling.")
+            return
+
+        logger.info("Entering 2D scaling (ginput 2 points).")
+
         # 2D clicks on image
-        plt.figure(figsize=(10, 6))
-        plt.imshow(self.img_rgb)
-        plt.title("Click TWO points with known real distance (close window after selecting).")
-        plt.axis("off")
-        pts = plt.ginput(2, timeout=0)
-        plt.close()
+        try:
+            plt.figure(figsize=(10, 6))
+            plt.imshow(self.img_rgb)
+            plt.title("Click TWO points with known real distance (close window after selecting).")
+            plt.axis("off")
+            pts = plt.ginput(2, timeout=0)
+            plt.close()
+        except Exception as e:
+            logger.exception("Matplotlib ginput failed.")
+            QtWidgets.QMessageBox.warning(self, "Scale error", f"2D click selection failed:\n{e}")
+            return
 
         if len(pts) != 2:
+            logger.info("Scale selection aborted (selected %d points).", len(pts))
             return
 
         (u1, v1), (u2, v2) = pts
+        logger.debug("Scale clicks: p1=(%.2f,%.2f) p2=(%.2f,%.2f)", u1, v1, u2, v2)
+
         try:
             p1 = self._pixel_to_xyz(u1, v1)
             p2 = self._pixel_to_xyz(u2, v2)
         except Exception as e:
+            logger.exception("Scale: pixel->xyz failed.")
             QtWidgets.QMessageBox.warning(self, "Scale error", str(e))
             return
 
         dist = float(np.linalg.norm(p1 - p2))
-        if dist <= 1e-9:
+        if not np.isfinite(dist) or dist <= 1e-9:
             QtWidgets.QMessageBox.warning(self, "Scale error", "Selected points yield zero/invalid distance.")
             return
 
         desired_m = float(self.scale_mm_spin.value()) / 1000.0
         scale = desired_m / dist
+        logger.info("Scale computed: desired=%.6g m, measured=%.6g m, factor=%.6g", desired_m, dist, scale)
 
         self.depth_m = self.depth_m * scale
         xyz, _uv = backproject(self.depth_m, self.K, stride=int(self.stride_spin.value()))
         self.xyz = xyz
-        self.picker.set_xyz(xyz)
+        if xyz.shape[0] == 0:
+            logger.error("Point cloud empty after scaling + backprojection.")
+            QtWidgets.QMessageBox.warning(self, "Scale error", "Point cloud became empty after scaling.")
+            return
 
-        self.status.setText(f"Scale applied: ×{scale:.6f}. Continue clicking 3D points to add them to the pending list.")
+        self.picker.set_xyz(xyz)
+        self._set_status(f"Scale applied: ×{scale:.6f}. Continue clicking 3D points to add them to the pending list.")
 
     def _pixel_to_xyz(self, u: float, v: float) -> np.ndarray:
         assert self.depth_m is not None and self.K is not None
@@ -556,7 +801,7 @@ class SingleImage3DDialog(QtWidgets.QDialog):
 
         z = float(self.depth_m[vi, ui])
         if not np.isfinite(z) or z <= 0:
-            raise ValueError("Invalid depth at selected pixel.")
+            raise ValueError(f"Invalid depth at selected pixel (u={ui}, v={vi}): z={z}")
 
         # BUGFIX: use self.K.fx/self.K.fy (not K.fx)
         x = (ui - self.K.cx) * z / self.K.fx
@@ -598,7 +843,7 @@ class SingleImage3DDialog(QtWidgets.QDialog):
             self._pending_order.remove(label)
         self._pending_order.append(label)
 
-        self.status.setText(f"Pending: {label} -> ({arr[0]:.4f}, {arr[1]:.4f}, {arr[2]:.4f})")
+        self._set_status(f"Pending: {label} -> ({arr[0]:.4f}, {arr[1]:.4f}, {arr[2]:.4f})")
         self._refresh_pending_table()
 
     def _refresh_pending_table(self):
@@ -665,7 +910,7 @@ class SingleImage3DDialog(QtWidgets.QDialog):
             idx = self._pending_order.index(old)
             self._pending_order[idx] = new
 
-        self.status.setText(f"Renamed pending point: {old} → {new}")
+        self._set_status(f"Renamed pending point: {old} → {new}")
         self._refresh_pending_table()
 
     def _delete_selected(self):
@@ -683,7 +928,7 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         if lb in self._pending_order:
             self._pending_order = [x for x in self._pending_order if x != lb]
 
-        self.status.setText(f"Deleted pending point: {lb}")
+        self._set_status(f"Deleted pending point: {lb}")
         self._refresh_pending_table()
 
     def _undo_last(self):
@@ -692,7 +937,7 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         last = self._pending_order.pop()
         if last in self._pending_points:
             self._pending_points.pop(last, None)
-            self.status.setText(f"Undo last: removed '{last}'")
+            self._set_status(f"Undo last: removed '{last}'")
             self._refresh_pending_table()
 
     def _clear_all(self):
@@ -704,7 +949,7 @@ class SingleImage3DDialog(QtWidgets.QDialog):
             return
         self._pending_points.clear()
         self._pending_order.clear()
-        self.status.setText("Cleared all pending points.")
+        self._set_status("Cleared all pending points.")
         self._refresh_pending_table()
 
     # -------------------------
@@ -740,8 +985,9 @@ class SingleImage3DDialog(QtWidgets.QDialog):
             try:
                 self.on_dataset_changed_callback()
             except Exception:
-                pass
+                logger.exception("on_dataset_changed_callback failed (ignored).")
 
+        logger.info("Committed %d points to dataset.", len(self._pending_points))
         self.accept()
 
 
