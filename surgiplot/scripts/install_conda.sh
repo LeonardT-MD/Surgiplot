@@ -15,3 +15,5 @@ echo ""
 echo "Done."
 echo "Activate with: conda activate ${ENV_NAME}"
 echo "Run GUI with:  surgiplot_gui"
+
+chmod +x scripts/install_conda.sh
