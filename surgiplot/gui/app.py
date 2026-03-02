@@ -1,18 +1,24 @@
 """
 Surgiplot GUI — single-file app (copy-paste ready)
 
-Fixes vs your pasted snippet:
-- Removed duplicated matplotlib import blocks.
-- Removed duplicated PlotPanel class definitions.
-- Fixed plot_vom_voa indentation (was nested inside plot_points).
-- Integrated plot_vom_voa into PlotPanel properly.
-- Wired VOM_VOA plotting call to pass debug + toggle options.
-- Added VOM plotting toggles to MetricPanel (polygons/ellipses/distance/VOM/sVOM + slice counts).
-- Kept your existing AoA/SF, AoE, Distance, Area plotting methods intact.
+Adds:
+- Single-image depth -> 3D reconstruction dialog
+- Set scale from 2D clicks (known distance in mm)
+- Pick points on reconstructed 3D cloud, enter label, OK
+- Points are inserted immediately into ds.points[label] = xyz
+- Then metrics work immediately with those labels (as normal xyz points)
+
+Dependencies for the new feature:
+  pip install -U numpy pillow matplotlib transformers torch
 """
 
 from __future__ import annotations
 
+import math
+import os
+from typing import Optional, Tuple
+
+import numpy as np
 from PySide6 import QtWidgets, QtCore
 
 from surgiplot.core.io.loaders import load_dataset, load_points_from_manual
@@ -27,6 +33,7 @@ try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+    import matplotlib.pyplot as plt
 
     HAS_MPL = True
 except Exception:
@@ -34,6 +41,7 @@ except Exception:
     FigureCanvas = None  # type: ignore
     Figure = None  # type: ignore
     Poly3DCollection = None  # type: ignore
+    plt = None  # type: ignore
 
 
 def _dbg_get(dbg, key: str, default=None):
@@ -57,8 +65,6 @@ def _close_loop(xs, ys, zs):
 
 def _project_point_fixed_distance(p, p_ref, distance: float):
     """Project point p to be at a fixed distance from p_ref along vector p_ref->p."""
-    import numpy as np
-
     p = np.asarray(p, dtype=float).reshape(3,)
     p_ref = np.asarray(p_ref, dtype=float).reshape(3,)
     d = p - p_ref
@@ -137,7 +143,7 @@ class PlotPanel(QtWidgets.QWidget):
         self._draw()
 
     # -------------------------
-    # NEW: VOM / sVOM / VoA plotting
+    # VOM / sVOM / VoA plotting
     # -------------------------
     def plot_vom_voa(
         self,
@@ -155,28 +161,12 @@ class PlotPanel(QtWidgets.QWidget):
         n_svom_slices: int = 15,
         title="VOM_VOA view",
     ):
-        """
-        Plots:
-          - entry/target polygons
-          - centroids + target-distance vector
-          - ellipse approximations (if provided in debug)
-          - VOM sides + sVOM truncated sides (from debug slices or interpolation)
-
-        Expected debug keys (any subset):
-          - entry_centroid, target_centroid
-          - entry_ellipse_3d, target_ellipse_3d
-          - cut_ellipse_3d OR svom_cut_ellipse_3d
-          - vom_slices_3d, svom_slices_3d
-        """
         if not HAS_MPL:
             return
-
-        import numpy as np
 
         self.clear()
         self._scatter_all(ds)
 
-        # --- polygons
         entry_pts = [ds.points[n] for n in entry]
         target_pts = [ds.points[n] for n in target]
 
@@ -197,7 +187,6 @@ class PlotPanel(QtWidgets.QWidget):
                 self.ax.add_collection3d(Poly3DCollection([np.asarray(entry_pts, dtype=float)], alpha=0.10))
                 self.ax.add_collection3d(Poly3DCollection([np.asarray(target_pts, dtype=float)], alpha=0.10))
 
-        # --- centroids and target distance
         c_entry = _dbg_get(debug, "entry_centroid", None)
         c_target = _dbg_get(debug, "target_centroid", None)
 
@@ -215,7 +204,6 @@ class PlotPanel(QtWidgets.QWidget):
         if show_target_distance:
             self.ax.plot([cx1, cx2], [cy1, cy2], [cz1, cz2], linestyle="--", linewidth=2)
 
-        # --- ellipses
         ell1 = _dbg_get(debug, "entry_ellipse_3d", None)
         ell2 = _dbg_get(debug, "target_ellipse_3d", None)
         ell3 = _dbg_get(debug, "cut_ellipse_3d", _dbg_get(debug, "svom_cut_ellipse_3d", None))
@@ -233,7 +221,6 @@ class PlotPanel(QtWidgets.QWidget):
             _plot_loop(ell2, lw=2.0)
             _plot_loop(ell3, lw=2.0)
 
-        # --- VOM / sVOM side surfaces
         vom_slices = _dbg_get(debug, "vom_slices_3d", None)
         svom_slices = _dbg_get(debug, "svom_slices_3d", None)
 
@@ -306,8 +293,6 @@ class PlotPanel(QtWidgets.QWidget):
     ):
         if not HAS_MPL:
             return
-
-        import numpy as np
 
         p_cr = ds.points[cranial]
         p_ca = ds.points[caudal]
@@ -426,7 +411,6 @@ class PlotPanel(QtWidgets.QWidget):
         self.ax.plot(xs2, ys2, zs2, linewidth=2)
 
         if Poly3DCollection is not None:
-            import numpy as np
             self.ax.add_collection3d(Poly3DCollection([list(map(np.asarray, pts))], alpha=0.12))
 
         self.ax.set_title(title)
@@ -434,6 +418,331 @@ class PlotPanel(QtWidgets.QWidget):
         self.ax.set_ylabel("Y")
         self.ax.set_zlabel("Z")
         self._draw()
+
+
+# -------------------------
+# Single-image depth -> 3D dialog
+# -------------------------
+class _CameraIntrinsics:
+    def __init__(self, width: int, height: int, fov_deg: float = 60.0):
+        self.width = int(width)
+        self.height = int(height)
+        fov_rad = math.radians(float(fov_deg))
+        self.fx = 0.5 * self.width / math.tan(0.5 * fov_rad)
+        self.fy = self.fx
+        self.cx = self.width / 2.0
+        self.cy = self.height / 2.0
+
+
+def _robust_norm_depth(d: np.ndarray, eps: float = 1e-6) -> np.ndarray:
+    d = d.astype(np.float32)
+    p1, p99 = np.percentile(d, [1, 99])
+    d = (d - p1) / (p99 - p1 + eps)
+    return np.clip(d, 0.0, 1.0)
+
+
+def _backproject(depth_m: np.ndarray, K: _CameraIntrinsics, stride: int = 3) -> Tuple[np.ndarray, np.ndarray]:
+    h, w = depth_m.shape
+    ys = np.arange(0, h, stride, dtype=np.int32)
+    xs = np.arange(0, w, stride, dtype=np.int32)
+    gx, gy = np.meshgrid(xs, ys)
+    u = gx.reshape(-1).astype(np.float32)
+    v = gy.reshape(-1).astype(np.float32)
+    z = depth_m[gy, gx].reshape(-1).astype(np.float32)
+
+    valid = np.isfinite(z) & (z > 1e-9)
+    u, v, z = u[valid], v[valid], z[valid]
+
+    x = (u - K.cx) * z / K.fx
+    y = (v - K.cy) * z / K.fy
+    xyz = np.stack([x, y, z], axis=1)
+    uv = np.stack([u, v], axis=1)
+    return xyz, uv
+
+
+class _PointCloudPicker3D(QtWidgets.QWidget):
+    """
+    Embedded matplotlib 3D scatter that emits picked xyz.
+    """
+    picked = QtCore.Signal(object)  # np.ndarray shape (3,)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        if not HAS_MPL:
+            lay = QtWidgets.QVBoxLayout(self)
+            lay.addWidget(QtWidgets.QLabel("Matplotlib missing; cannot show 3D picker."))
+            return
+
+        self.fig = Figure(figsize=(6, 5))
+        self.canvas = FigureCanvas(self.fig)
+        self.ax = self.fig.add_subplot(111, projection="3d")
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.addWidget(self.canvas)
+
+        self._xyz = None
+        self._sc = None
+        self.canvas.mpl_connect("pick_event", self._on_pick)
+
+    def set_xyz(self, xyz: np.ndarray):
+        if not HAS_MPL:
+            return
+        self._xyz = xyz
+        self.ax.clear()
+        self.ax.set_xlabel("X (m)")
+        self.ax.set_ylabel("Y (m)")
+        self.ax.set_zlabel("Z (m)")
+
+        # picker tolerance (increase if needed)
+        self._sc = self.ax.scatter(
+            xyz[:, 0], xyz[:, 1], xyz[:, 2],
+            s=2, alpha=0.75, picker=6
+        )
+        self.ax.view_init(elev=20, azim=-60)
+        self.canvas.draw_idle()
+
+    def _on_pick(self, event):
+        if self._xyz is None:
+            return
+        ind = getattr(event, "ind", None)
+        if ind is None or len(ind) == 0:
+            return
+        i = int(ind[0])
+        self.picked.emit(self._xyz[i].copy())
+
+
+class SingleImage3DDialog(QtWidgets.QDialog):
+    """
+    Workflow:
+      - Load image
+      - Run depth estimation -> pointcloud
+      - Optionally set scale by clicking 2 points on the image
+      - Click points in 3D -> prompt label -> insert into ds.points[label] immediately
+    """
+    def __init__(self, ds, on_dataset_changed_callback=None, parent=None):
+        super().__init__(parent)
+        self.ds = ds
+        self.on_dataset_changed_callback = on_dataset_changed_callback
+
+        self.setWindowTitle("Single Image → Depth → 3D → Add points to dataset (live)")
+        self.setModal(False)
+        self.resize(1200, 700)
+
+        self.image_path: Optional[str] = None
+        self.img_rgb: Optional[np.ndarray] = None
+        self.depth_m: Optional[np.ndarray] = None
+        self.K: Optional[_CameraIntrinsics] = None
+        self.xyz: Optional[np.ndarray] = None
+
+        # controls
+        self.btn_load = QtWidgets.QPushButton("Load image…")
+        self.btn_run = QtWidgets.QPushButton("Run depth + reconstruct")
+        self.btn_scale = QtWidgets.QPushButton("Set scale (2D clicks)")
+        self.btn_scale.setEnabled(False)
+
+        self.model_cb = QtWidgets.QComboBox()
+        self.model_cb.addItems([
+            "depth-anything/Depth-Anything-V2-Small-hf",
+            "depth-anything/Depth-Anything-V2-Base-hf",
+            "depth-anything/Depth-Anything-V2-Large-hf",
+        ])
+
+        self.fov_spin = QtWidgets.QDoubleSpinBox()
+        self.fov_spin.setRange(10.0, 140.0)
+        self.fov_spin.setValue(60.0)
+        self.fov_spin.setSuffix("°")
+
+        self.stride_spin = QtWidgets.QSpinBox()
+        self.stride_spin.setRange(1, 12)
+        self.stride_spin.setValue(3)
+
+        self.scale_mm_spin = QtWidgets.QDoubleSpinBox()
+        self.scale_mm_spin.setRange(0.1, 500.0)
+        self.scale_mm_spin.setValue(10.0)
+        self.scale_mm_spin.setSuffix(" mm")
+
+        self.status = QtWidgets.QLabel(
+            "Load an image, run reconstruction, then click 3D points to add them to the dataset."
+        )
+
+        self.picker = _PointCloudPicker3D()
+        self.picker.picked.connect(self._on_picked_xyz)
+
+        top = QtWidgets.QGridLayout()
+        top.addWidget(self.btn_load, 0, 0)
+        top.addWidget(QtWidgets.QLabel("Model:"), 0, 1)
+        top.addWidget(self.model_cb, 0, 2)
+        top.addWidget(QtWidgets.QLabel("FOV:"), 0, 3)
+        top.addWidget(self.fov_spin, 0, 4)
+
+        top.addWidget(self.btn_run, 1, 0)
+        top.addWidget(QtWidgets.QLabel("Stride:"), 1, 1)
+        top.addWidget(self.stride_spin, 1, 2)
+        top.addWidget(QtWidgets.QLabel("Scale:"), 1, 3)
+        top.addWidget(self.scale_mm_spin, 1, 4)
+        top.addWidget(self.btn_scale, 1, 5)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(top)
+        layout.addWidget(self.picker)
+        layout.addWidget(self.status)
+
+        self.btn_load.clicked.connect(self._load_image)
+        self.btn_run.clicked.connect(self._run_depth)
+        self.btn_scale.clicked.connect(self._set_scale)
+
+    def _load_image(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select surgical image", "", "Images (*.png *.jpg *.jpeg *.tif *.tiff);;All files (*)"
+        )
+        if not path:
+            return
+        if not HAS_MPL:
+            QtWidgets.QMessageBox.critical(self, "Missing dependency", "Matplotlib is required for this dialog.")
+            return
+
+        # PIL is required
+        try:
+            from PIL import Image
+        except Exception:
+            QtWidgets.QMessageBox.critical(self, "Missing dependency", "Install pillow: pip install pillow")
+            return
+
+        self.image_path = path
+        img = Image.open(path).convert("RGB")
+        self.img_rgb = np.array(img)
+        h, w = self.img_rgb.shape[:2]
+        self.K = _CameraIntrinsics(w, h, float(self.fov_spin.value()))
+        self.depth_m = None
+        self.xyz = None
+        self.btn_scale.setEnabled(False)
+
+        self.status.setText(f"Loaded: {os.path.basename(path)} ({w}×{h}). Now run depth + reconstruct.")
+
+    def _run_depth(self):
+        if self.img_rgb is None:
+            QtWidgets.QMessageBox.warning(self, "Missing image", "Load an image first.")
+            return
+
+        # transformers + torch
+        try:
+            from transformers import pipeline
+        except Exception:
+            QtWidgets.QMessageBox.critical(self, "Missing dependency", "Install transformers: pip install transformers")
+            return
+
+        try:
+            import torch  # noqa: F401
+        except Exception:
+            QtWidgets.QMessageBox.critical(self, "Missing dependency", "Install torch (CPU or CUDA).")
+            return
+
+        from PIL import Image
+
+        h, w = self.img_rgb.shape[:2]
+        self.K = _CameraIntrinsics(w, h, float(self.fov_spin.value()))
+
+        self.status.setText("Running depth estimation… (first time may download model)")
+        QtWidgets.QApplication.processEvents()
+
+        model_id = self.model_cb.currentText()
+        pipe = pipeline(task="depth-estimation", model=model_id)
+        out = pipe(Image.fromarray(self.img_rgb))
+        depth_img = out["depth"]
+        depth_raw = np.array(depth_img).astype(np.float32)
+
+        depth_rel = _robust_norm_depth(depth_raw)
+
+        # proxy metric depth (meters-ish); absolute scaling will correct global scale
+        depth_m = 0.2 + 0.8 * depth_rel
+        self.depth_m = depth_m
+
+        xyz, _uv = _backproject(depth_m, self.K, stride=int(self.stride_spin.value()))
+        self.xyz = xyz
+
+        self.picker.set_xyz(xyz)
+        self.btn_scale.setEnabled(True)
+        self.status.setText(
+            "Reconstruction ready. Optional: set scale. Then click points in 3D; for each click, enter a label and OK."
+        )
+
+    def _set_scale(self):
+        if self.img_rgb is None or self.depth_m is None or self.K is None:
+            return
+        if not HAS_MPL:
+            return
+
+        # 2D clicks on image
+        plt.figure(figsize=(10, 6))
+        plt.imshow(self.img_rgb)
+        plt.title("Click TWO points with known real distance (close window after selecting).")
+        plt.axis("off")
+        pts = plt.ginput(2, timeout=0)
+        plt.close()
+
+        if len(pts) != 2:
+            return
+
+        (u1, v1), (u2, v2) = pts
+        p1 = self._pixel_to_xyz(u1, v1)
+        p2 = self._pixel_to_xyz(u2, v2)
+        dist = float(np.linalg.norm(p1 - p2))
+        if dist <= 1e-9:
+            QtWidgets.QMessageBox.warning(self, "Scale error", "Selected points yield zero/invalid distance.")
+            return
+
+        desired_m = float(self.scale_mm_spin.value()) / 1000.0
+        scale = desired_m / dist
+
+        self.depth_m *= scale
+        xyz, _uv = _backproject(self.depth_m, self.K, stride=int(self.stride_spin.value()))
+        self.xyz = xyz
+        self.picker.set_xyz(xyz)
+
+        self.status.setText(f"Scale applied: ×{scale:.6f}. Continue clicking 3D points to add them to dataset.")
+
+    def _pixel_to_xyz(self, u: float, v: float) -> np.ndarray:
+        assert self.depth_m is not None and self.K is not None
+        ui = int(np.clip(round(u), 0, self.K.width - 1))
+        vi = int(np.clip(round(v), 0, self.K.height - 1))
+        z = float(self.depth_m[vi, ui])
+        if not np.isfinite(z) or z <= 0:
+            raise ValueError("Invalid depth at pixel.")
+        x = (ui - self.K.cx) * z / self.K.fx
+        y = (vi - self.K.cy) * z / self.K.fy
+        return np.array([x, y, z], dtype=float)
+
+    def _on_picked_xyz(self, xyz):
+        # Ask label
+        label, ok = QtWidgets.QInputDialog.getText(
+            self, "Label point", "Label for this point (will become point name in dataset):"
+        )
+        if not ok:
+            return
+        label = (label or "").strip()
+        if not label:
+            return
+
+        # overwrite check
+        if label in self.ds.points:
+            resp = QtWidgets.QMessageBox.question(
+                self,
+                "Overwrite?",
+                f"Point '{label}' already exists. Overwrite it?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            )
+            if resp != QtWidgets.QMessageBox.Yes:
+                return
+
+        # Insert into dataset immediately
+        self.ds.points[label] = np.asarray(xyz, dtype=float).reshape(3,)
+        if isinstance(getattr(self.ds, "meta", None), dict):
+            self.ds.meta["source"] = self.ds.meta.get("source", "single_image_depth")
+
+        self.status.setText(f"Added/updated point: {label} -> ({xyz[0]:.4f}, {xyz[1]:.4f}, {xyz[2]:.4f})")
+
+        if callable(self.on_dataset_changed_callback):
+            self.on_dataset_changed_callback()
 
 
 # -------------------------
@@ -453,7 +762,7 @@ class DatasetPanel(QtWidgets.QWidget):
         layout.addWidget(header)
 
         self.source_cb = QtWidgets.QComboBox()
-        self.source_cb.addItems(["navigation", "photogrammetry", "scanner"])
+        self.source_cb.addItems(["navigation", "photogrammetry", "scanner", "single_image_depth"])
         self.source_cb.setCurrentText(self.ds.meta.get("source", "navigation"))
         layout.addWidget(self.source_cb)
 
@@ -659,7 +968,6 @@ class MetricPanel(QtWidgets.QWidget):
         is_dist = metric == "DISTANCE_3D"
         is_area = metric == "AREA_3D"
 
-        # VOM_VOA
         for w in (
             self.vom_entry, self.vom_target, self.stand_dist,
             self.vom_show_polygons, self.vom_show_ellipses, self.vom_show_distance,
@@ -667,7 +975,6 @@ class MetricPanel(QtWidgets.QWidget):
         ):
             self._set_row_visible(w, is_vom)
 
-        # AOA_SF
         for w in (
             self.aoa_cranial, self.aoa_caudal, self.aoa_medial, self.aoa_lateral,
             self.aoa_pivot, self.aoa_constraints, self.aoa_rescale_enable
@@ -675,15 +982,12 @@ class MetricPanel(QtWidgets.QWidget):
             self._set_row_visible(w, is_aoa)
         self._set_row_visible(self.aoa_rescale_radius, is_aoa and self.aoa_rescale_enable.isChecked())
 
-        # AOE
         for w in (self.A_edit, self.B_edit, self.C_edit):
             self._set_row_visible(w, is_aoe)
 
-        # DISTANCE
         for w in (self.dist_A, self.dist_B):
             self._set_row_visible(w, is_dist)
 
-        # AREA
         self._set_row_visible(self.area_poly, is_area)
 
     @staticmethod
@@ -713,6 +1017,11 @@ class MainWindow(QtWidgets.QMainWindow):
         splitter.addWidget(self.plot_panel)
         splitter.setSizes([420, 520, 460])
 
+        # Toolbar action for single-image points
+        tb = self.addToolBar("Tools")
+        act_single = tb.addAction("Single-image 3D points…")
+        act_single.triggered.connect(self._open_single_image_dialog)
+
         central = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(central)
         lay.addWidget(splitter)
@@ -722,6 +1031,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.metric_panel.run_requested.connect(self._run_metric)
 
         self.plot_panel.plot_points(self.ds, title="Dataset overview")
+
+        self._single_image_dlg = None
+
+    def _open_single_image_dialog(self):
+        if not HAS_MPL:
+            QtWidgets.QMessageBox.critical(self, "Missing dependency", "Matplotlib is required.")
+            return
+
+        def refresh_all():
+            self.dataset_panel.populate()
+            self.plot_panel.plot_points(self.ds, title="Dataset updated (single-image points added)")
+
+        self._single_image_dlg = SingleImage3DDialog(self.ds, on_dataset_changed_callback=refresh_all, parent=self)
+        self._single_image_dlg.show()
 
     def _on_dataset_applied(self):
         self.dataset_panel.populate()
@@ -1005,3 +1328,7 @@ def main():
     w = StartWindow()
     w.show()
     app.exec()
+
+
+if __name__ == "__main__":
+    main()
