@@ -2,18 +2,20 @@
 Surgiplot GUI — single-file app (copy-paste ready)
 
 AI feature separation:
-- The Single-image depth -> 3D reconstruction + point collection dialog is now in:
+- The Single-image depth -> 3D reconstruction + point collection dialog is in:
     surgiplot/ai/single_image_depth.py
+
+Start flow (IMPORTANT change):
+- Start window now has 3 modes:
+    1) Load annotation file
+    2) Manual entry
+    3) Single surgical image (AI depth → pick points → OK → workspace)
 
 Feature deps (only needed if you use the dialog):
   pip install -U numpy pillow matplotlib transformers torch
 """
 
 from __future__ import annotations
-
-import math
-import os
-from typing import Optional, Tuple
 
 import numpy as np
 from PySide6 import QtWidgets, QtCore
@@ -37,7 +39,6 @@ try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-    import matplotlib.pyplot as plt
 
     HAS_MPL = True
 except Exception:
@@ -45,7 +46,6 @@ except Exception:
     FigureCanvas = None  # type: ignore
     Figure = None  # type: ignore
     Poly3DCollection = None  # type: ignore
-    plt = None  # type: ignore
 
 
 def _dbg_get(dbg, key: str, default=None):
@@ -696,9 +696,9 @@ class MainWindow(QtWidgets.QMainWindow):
         splitter.addWidget(self.plot_panel)
         splitter.setSizes([420, 520, 460])
 
-        # Toolbar action for single-image points
+        # Toolbar action for single-image points (optional "add more points" while already in workspace)
         tb = self.addToolBar("Tools")
-        act_single = tb.addAction("Single-image 3D points…")
+        act_single = tb.addAction("Add points from single image…")
         act_single.triggered.connect(self._open_single_image_dialog)
         if not HAS_SINGLE_IMAGE_DIALOG:
             act_single.setEnabled(False)
@@ -714,8 +714,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.plot_panel.plot_points(self.ds, title="Dataset overview")
 
-        self._single_image_dlg = None
-
     def _open_single_image_dialog(self):
         if not HAS_SINGLE_IMAGE_DIALOG or SingleImage3DDialog is None:
             QtWidgets.QMessageBox.critical(
@@ -723,16 +721,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Feature unavailable",
                 "Single-image 3D dialog is not available.\n\n"
                 "1) Ensure file exists: surgiplot/ai/single_image_depth.py\n"
-                "2) Install deps: pip install -U numpy pillow matplotlib transformers torch"
+                "2) Install deps: pip install -U numpy pillow matplotlib transformers torch",
             )
             return
 
-        def refresh_all():
+        dlg = SingleImage3DDialog(self.ds, parent=self)
+        if dlg.exec() == QtWidgets.QDialog.Accepted:
             self.dataset_panel.populate()
-            self.plot_panel.plot_points(self.ds, title="Dataset updated (single-image points added)")
-
-        self._single_image_dlg = SingleImage3DDialog(self.ds, on_dataset_changed_callback=refresh_all, parent=self)
-        self._single_image_dlg.show()
+            self.plot_panel.plot_points(self.ds, title="Dataset updated (image points committed)")
 
     def _on_dataset_applied(self):
         self.dataset_panel.populate()
@@ -914,29 +910,43 @@ class StartWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Surgiplot")
-        self.resize(720, 420)
+        self.resize(760, 460)
 
         self.main_window: MainWindow | None = None
 
         layout = QtWidgets.QVBoxLayout(self)
 
-        title = QtWidgets.QLabel("<h2>Surgiplot</h2><p>Load points then use the workspace.</p>")
+        title = QtWidgets.QLabel("<h2>Surgiplot</h2><p>Select an input mode, then open the workspace.</p>")
         title.setTextFormat(QtCore.Qt.RichText)
         layout.addWidget(title)
 
         mode_group = QtWidgets.QGroupBox("Input mode")
         mode_layout = QtWidgets.QVBoxLayout(mode_group)
+
         self.rb_file = QtWidgets.QRadioButton("Load annotation file (txt/csv/tsv/space-delimited)")
         self.rb_manual = QtWidgets.QRadioButton("Manual entry (paste coordinates)")
+        self.rb_image = QtWidgets.QRadioButton("Single surgical image (AI depth → pick points → workspace)")
+
         self.rb_file.setChecked(True)
         mode_layout.addWidget(self.rb_file)
         mode_layout.addWidget(self.rb_manual)
+        mode_layout.addWidget(self.rb_image)
+
+        # Disable image mode if dialog missing
+        if not HAS_SINGLE_IMAGE_DIALOG:
+            self.rb_image.setEnabled(False)
+            self.rb_image.setToolTip(
+                "AI image mode unavailable.\n\n"
+                "1) Ensure file exists: surgiplot/ai/single_image_depth.py\n"
+                "2) Install deps: pip install -U numpy pillow matplotlib transformers torch"
+            )
+
         layout.addWidget(mode_group)
 
         src_layout = QtWidgets.QHBoxLayout()
         src_layout.addWidget(QtWidgets.QLabel("Source of data:"))
         self.source = QtWidgets.QComboBox()
-        self.source.addItems(["navigation", "photogrammetry", "scanner"])
+        self.source.addItems(["navigation", "photogrammetry", "scanner", "single_image_depth"])
         src_layout.addWidget(self.source)
         src_layout.addStretch(1)
         layout.addLayout(src_layout)
@@ -960,11 +970,26 @@ class StartWindow(QtWidgets.QWidget):
         layout.addWidget(btn)
 
         self.rb_file.toggled.connect(self._toggle_mode)
+        self.rb_manual.toggled.connect(self._toggle_mode)
+        self.rb_image.toggled.connect(self._toggle_mode)
+        self._toggle_mode()
 
     def _toggle_mode(self):
         is_file = self.rb_file.isChecked()
+        is_manual = self.rb_manual.isChecked()
+        is_image = self.rb_image.isChecked()
+
         self.path_edit.setVisible(is_file)
-        self.manual_text.setVisible(not is_file)
+        self.manual_text.setVisible(is_manual)
+
+        # Hide both in image mode
+        if is_image:
+            self.path_edit.setVisible(False)
+            self.manual_text.setVisible(False)
+
+        # Suggest correct source for image mode
+        if is_image:
+            self.source.setCurrentText("single_image_depth")
 
     def _browse(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -993,6 +1018,31 @@ class StartWindow(QtWidgets.QWidget):
     def _continue(self):
         src = self.source.currentText()
 
+        # 1) AI image workflow (modal dialog, then open workspace)
+        if self.rb_image.isChecked():
+            if not HAS_SINGLE_IMAGE_DIALOG or SingleImage3DDialog is None:
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "Feature unavailable",
+                    "AI image mode is not available.\n\n"
+                    "1) Ensure file exists: surgiplot/ai/single_image_depth.py\n"
+                    "2) Install deps: pip install -U numpy pillow matplotlib transformers torch",
+                )
+                return
+
+            # Start from an empty dataset
+            ds = load_points_from_manual([], names=None, source="single_image_depth", alias_points=False)
+
+            dlg = SingleImage3DDialog(ds, parent=self)
+            if dlg.exec() != QtWidgets.QDialog.Accepted:
+                return
+
+            self.main_window = MainWindow(ds)
+            self.main_window.show()
+            self.close()
+            return
+
+        # 2) File or manual
         if self.rb_file.isChecked():
             path = self.path_edit.text().strip()
             if not path:
