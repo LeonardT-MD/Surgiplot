@@ -40,3 +40,29 @@ aoe = AOE(data=ds, A="p1", B="p2", C="p3")
 ## GUI extras
 - Export labeled dataset (CSV/JSON)
 - Copy reproducible Python snippet for the current metric run
+
+
+
+
+### EDIT
+
+## Install (Conda)
+
+```bash
+git clone <repo>
+cd Surgiplot
+./scripts/install_conda.sh
+conda activate surgiplot_master
+surgiplot_gui
+
+
+
+That’s it. No alternative instructions. Less confusion.
+
+---
+
+## 6) Commit and push
+```bash
+git add env/surgiplot_master.yml pyproject.toml scripts/install_conda.sh README.md
+git commit -m "Add reproducible conda env + installer script"
+git push
