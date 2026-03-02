@@ -75,7 +75,7 @@ recommended**.
 ### Quick Install
 
 ``` bash
-git clone https://github.com/<YOUR_USERNAME>/Surgiplot.git
+git clone https://github.com/LeonardT-MD/Surgiplot.git
 cd Surgiplot
 
 conda env create -f env/surgiplot_master.yml
