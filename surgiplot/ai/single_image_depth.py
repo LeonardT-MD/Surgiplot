@@ -9,7 +9,8 @@ Dependencies (feature-only):
 Notes:
 - Uses HuggingFace transformers "depth-estimation" pipeline (Depth Anything V2).
 - Depth is relative; scale can be set interactively from two 2D clicks (known distance in mm).
-- Click 3D point cloud -> prompt label -> inserts into ds.points[label] immediately.
+- Click 3D point cloud -> prompt label -> stores into a BUFFER table (edit/remove).
+- Press OK -> commits buffered points into ds.points (optionally overwriting).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 import numpy as np
 from PySide6 import QtWidgets, QtCore
@@ -56,9 +57,7 @@ class CameraIntrinsics:
 
 
 def robust_norm_depth(d: np.ndarray, eps: float = 1e-6) -> np.ndarray:
-    """
-    Robustly normalize depth-like values to [0, 1] using 1st-99th percentiles.
-    """
+    """Robustly normalize depth-like values to [0, 1] using 1st-99th percentiles."""
     d = np.asarray(d, dtype=np.float32)
     p1, p99 = np.percentile(d, [1, 99])
     d = (d - p1) / (p99 - p1 + eps)
@@ -68,6 +67,7 @@ def robust_norm_depth(d: np.ndarray, eps: float = 1e-6) -> np.ndarray:
 def backproject(depth_m: np.ndarray, K: CameraIntrinsics, stride: int = 3) -> Tuple[np.ndarray, np.ndarray]:
     """
     Backproject a depth map into a point cloud (camera coordinates).
+
     Returns:
       xyz: (N,3)
       uv : (N,2) pixel coordinates for each 3D point
@@ -124,9 +124,7 @@ class DepthEstimator:
         self._pipe = pipeline(task="depth-estimation", model=self.model_id)
 
     def predict_depth_raw(self, img_rgb: np.ndarray) -> np.ndarray:
-        """
-        Returns a 2D float32 array derived from the pipeline output depth image.
-        """
+        """Returns a 2D float32 array derived from the pipeline output depth image."""
         self._ensure()
 
         try:
@@ -166,7 +164,6 @@ class PointCloudPicker3D(QtWidgets.QWidget):
         self.fig = Figure(figsize=(6, 5))
         self.canvas = FigureCanvas(self.fig)
         self.ax = self.fig.add_subplot(111, projection="3d")
-
         lay.addWidget(self.canvas)
 
         self._xyz: Optional[np.ndarray] = None
@@ -206,7 +203,128 @@ class PointCloudPicker3D(QtWidgets.QWidget):
 
 
 # -------------------------
-# Dialog: single-image -> 3D -> insert points into dataset
+# Picked points buffer panel (label/edit/remove before committing)
+# -------------------------
+class PickedPointsPanel(QtWidgets.QWidget):
+    """
+    Table showing buffered picked points (label, x, y, z). Label is editable; coords are read-only.
+    """
+    changed = QtCore.Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._points: Dict[str, np.ndarray] = {}
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.addWidget(QtWidgets.QLabel("<b>Picked points (buffer)</b> — edit labels / remove, then OK to commit"))
+
+        self.table = QtWidgets.QTableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["label", "x", "y", "z"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        lay.addWidget(self.table)
+
+        btns = QtWidgets.QHBoxLayout()
+        self.btn_remove = QtWidgets.QPushButton("Remove selected")
+        self.btn_clear = QtWidgets.QPushButton("Clear all")
+        btns.addWidget(self.btn_remove)
+        btns.addWidget(self.btn_clear)
+        btns.addStretch(1)
+        lay.addLayout(btns)
+
+        self.btn_remove.clicked.connect(self.remove_selected)
+        self.btn_clear.clicked.connect(self.clear)
+        self.table.itemChanged.connect(self._on_item_changed)
+
+        self._refresh()
+
+    def points(self) -> Dict[str, np.ndarray]:
+        return {k: v.copy() for k, v in self._points.items()}
+
+    def upsert(self, label: str, xyz: np.ndarray):
+        label = str(label).strip()
+        if not label:
+            return
+        self._points[label] = np.asarray(xyz, dtype=float).reshape(3,)
+        self._refresh()
+        self.changed.emit()
+
+    def remove_selected(self):
+        rows = sorted({it.row() for it in self.table.selectedItems()}, reverse=True)
+        if not rows:
+            return
+
+        labels = []
+        for r in rows:
+            it = self.table.item(r, 0)
+            if it:
+                labels.append(it.text().strip())
+
+        for lb in labels:
+            self._points.pop(lb, None)
+
+        self._refresh()
+        self.changed.emit()
+
+    def clear(self):
+        self._points.clear()
+        self._refresh()
+        self.changed.emit()
+
+    def _refresh(self):
+        self.table.blockSignals(True)
+
+        items = list(self._points.items())
+        self.table.setRowCount(len(items))
+
+        for i, (label, xyz) in enumerate(items):
+            self.table.setItem(i, 0, QtWidgets.QTableWidgetItem(str(label)))
+            self.table.setItem(i, 1, QtWidgets.QTableWidgetItem(f"{float(xyz[0]):.6f}"))
+            self.table.setItem(i, 2, QtWidgets.QTableWidgetItem(f"{float(xyz[1]):.6f}"))
+            self.table.setItem(i, 3, QtWidgets.QTableWidgetItem(f"{float(xyz[2]):.6f}"))
+
+        # set editability: label editable, coords read-only
+        for r in range(self.table.rowCount()):
+            it0 = self.table.item(r, 0)
+            it0.setFlags(it0.flags() | QtCore.Qt.ItemIsEditable)
+            for c in (1, 2, 3):
+                it = self.table.item(r, c)
+                it.setFlags(it.flags() & ~QtCore.Qt.ItemIsEditable)
+
+        self.table.blockSignals(False)
+
+    def _on_item_changed(self, item: QtWidgets.QTableWidgetItem):
+        # only label edits
+        if item.column() != 0:
+            return
+
+        rebuilt: Dict[str, np.ndarray] = {}
+        labels = []
+
+        for r in range(self.table.rowCount()):
+            lb = self.table.item(r, 0).text().strip()
+            if not lb:
+                QtWidgets.QMessageBox.warning(self, "Invalid label", "Labels cannot be empty.")
+                self._refresh()
+                return
+            labels.append(lb)
+
+            x = float(self.table.item(r, 1).text())
+            y = float(self.table.item(r, 2).text())
+            z = float(self.table.item(r, 3).text())
+            rebuilt[lb] = np.array([x, y, z], dtype=float)
+
+        if len(set(labels)) != len(labels):
+            QtWidgets.QMessageBox.warning(self, "Duplicate labels", "Two points share the same label. Please fix.")
+            self._refresh()
+            return
+
+        self._points = rebuilt
+        self.changed.emit()
+
+
+# -------------------------
+# Dialog: single-image -> 3D -> commit buffered points into dataset
 # -------------------------
 class SingleImage3DDialog(QtWidgets.QDialog):
     """
@@ -214,10 +332,11 @@ class SingleImage3DDialog(QtWidgets.QDialog):
       - Load image
       - Run depth estimation -> point cloud
       - Optional: set scale using 2D clicks + known distance (mm)
-      - Click points in 3D -> prompt label -> insert into ds.points[label]
+      - Click points in 3D -> prompt label -> add to BUFFER (editable/removable)
+      - OK commits buffered points into ds.points
     """
 
-    def __init__(self, ds, on_dataset_changed_callback=None, parent=None):
+    def __init__(self, ds, parent=None):
         super().__init__(parent)
 
         if not HAS_MPL:
@@ -229,11 +348,10 @@ class SingleImage3DDialog(QtWidgets.QDialog):
             raise RuntimeError("Matplotlib missing")
 
         self.ds = ds
-        self.on_dataset_changed_callback = on_dataset_changed_callback
 
-        self.setWindowTitle("Single Image → Depth → 3D → Add points to dataset (live)")
-        self.setModal(False)
-        self.resize(1200, 700)
+        self.setWindowTitle("Single Image → Depth → 3D → Pick points (OK to commit)")
+        self.setModal(True)
+        self.resize(1400, 760)
 
         self.image_path: Optional[str] = None
         self.img_rgb: Optional[np.ndarray] = None
@@ -268,12 +386,14 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         self.scale_mm_spin.setValue(10.0)
         self.scale_mm_spin.setSuffix(" mm")
 
-        self.status = QtWidgets.QLabel(
-            "Load an image, run reconstruction, then click 3D points to add them to the dataset."
-        )
+        self.status = QtWidgets.QLabel("Load an image, run reconstruction, click 3D points, then press OK to commit.")
+        self.status.setWordWrap(True)
 
         self.picker = PointCloudPicker3D()
         self.picker.picked.connect(self._on_picked_xyz)
+
+        self.points_panel = PickedPointsPanel()
+        self.points_panel.changed.connect(self._update_status)
 
         top = QtWidgets.QGridLayout()
         top.addWidget(self.btn_load, 0, 0)
@@ -289,16 +409,38 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         top.addWidget(self.scale_mm_spin, 1, 4)
         top.addWidget(self.btn_scale, 1, 5)
 
+        split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        split.addWidget(self.picker)
+        split.addWidget(self.points_panel)
+        split.setSizes([950, 450])
+
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._on_ok)
+        buttons.rejected.connect(self.reject)
+
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(top)
-        layout.addWidget(self.picker)
+        layout.addWidget(split)
         layout.addWidget(self.status)
+        layout.addWidget(buttons)
 
         self.btn_load.clicked.connect(self._load_image)
         self.btn_run.clicked.connect(self._run_depth)
         self.btn_scale.clicked.connect(self._set_scale)
 
         self._estimator: Optional[DepthEstimator] = None
+        self._update_status()
+
+    def buffered_points(self) -> Dict[str, np.ndarray]:
+        """Return buffered points without committing."""
+        return self.points_panel.points()
+
+    def _update_status(self):
+        n = len(self.points_panel.points())
+        extra = ""
+        if self.image_path:
+            extra = f" | image: {os.path.basename(self.image_path)}"
+        self.status.setText(f"Buffered points: {n}{extra}. Pick points in 3D; edit/remove in table; OK commits.")
 
     def _load_image(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -323,6 +465,7 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         self.xyz = None
         self.btn_scale.setEnabled(False)
 
+        self.points_panel.clear()
         self.status.setText(f"Loaded: {os.path.basename(path)} ({w}×{h}). Now run depth + reconstruct.")
 
     def _run_depth(self):
@@ -344,25 +487,24 @@ class SingleImage3DDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.critical(self, "Depth estimation error", str(e))
             return
 
-        # relative depth -> pseudo metric depth (meters-ish)
         depth_rel = robust_norm_depth(depth_raw)
-        depth_m = 0.2 + 0.8 * depth_rel  # baseline scaling; refined by user scaling if desired
-        self.depth_m = depth_m
+        self.depth_m = 0.2 + 0.8 * depth_rel  # baseline scaling; refined by user scale
 
-        xyz, _uv = backproject(depth_m, self.K, stride=int(self.stride_spin.value()))
+        xyz, _uv = backproject(self.depth_m, self.K, stride=int(self.stride_spin.value()))
         self.xyz = xyz
-
         self.picker.set_xyz(xyz)
+
         self.btn_scale.setEnabled(True)
-        self.status.setText(
-            "Reconstruction ready. Optional: set scale. Then click points in 3D; for each click, enter a label and OK."
-        )
+        self._update_status()
 
     def _set_scale(self):
         if self.img_rgb is None or self.depth_m is None or self.K is None:
             return
 
-        # 2D clicks on image
+        if plt is None:
+            QtWidgets.QMessageBox.critical(self, "Missing dependency", "Matplotlib is required for scaling.")
+            return
+
         plt.figure(figsize=(10, 6))
         plt.imshow(self.img_rgb)
         plt.title("Click TWO points with known real distance (close window after selecting).")
@@ -394,7 +536,7 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         self.xyz = xyz
         self.picker.set_xyz(xyz)
 
-        self.status.setText(f"Scale applied: ×{scale:.6f}. Continue clicking 3D points to add them to dataset.")
+        self.status.setText(f"Scale applied: ×{scale:.6f}. Continue picking points; then press OK to commit.")
 
     def _pixel_to_xyz(self, u: float, v: float) -> np.ndarray:
         assert self.depth_m is not None and self.K is not None
@@ -410,9 +552,7 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         return np.array([x, y, z], dtype=float)
 
     def _on_picked_xyz(self, xyz):
-        label, ok = QtWidgets.QInputDialog.getText(
-            self, "Label point", "Label for this point (will become point name in dataset):"
-        )
+        label, ok = QtWidgets.QInputDialog.getText(self, "Label point", "Label for this point (unique):")
         if not ok:
             return
 
@@ -420,21 +560,44 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         if not label:
             return
 
-        if label in self.ds.points:
+        if label in self.points_panel.points():
             resp = QtWidgets.QMessageBox.question(
                 self,
-                "Overwrite?",
-                f"Point '{label}' already exists. Overwrite it?",
+                "Overwrite buffer point?",
+                f"Point '{label}' already exists in the buffer. Overwrite it?",
                 QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             )
             if resp != QtWidgets.QMessageBox.Yes:
                 return
 
-        self.ds.points[label] = np.asarray(xyz, dtype=float).reshape(3,)
+        self.points_panel.upsert(label, np.asarray(xyz, dtype=float).reshape(3,))
+        self._update_status()
+
+    def _on_ok(self):
+        pts = self.points_panel.points()
+        if not pts:
+            resp = QtWidgets.QMessageBox.question(
+                self,
+                "No points selected",
+                "You have not selected any points. Continue anyway?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            )
+            if resp != QtWidgets.QMessageBox.Yes:
+                return
+
+        for label, xyz in pts.items():
+            if label in self.ds.points:
+                resp = QtWidgets.QMessageBox.question(
+                    self,
+                    "Overwrite dataset point?",
+                    f"Point '{label}' exists in dataset. Overwrite it?",
+                    QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                )
+                if resp != QtWidgets.QMessageBox.Yes:
+                    continue
+            self.ds.points[label] = np.asarray(xyz, dtype=float).reshape(3,)
+
         if isinstance(getattr(self.ds, "meta", None), dict):
-            self.ds.meta["source"] = self.ds.meta.get("source", "single_image_depth")
+            self.ds.meta["source"] = "single_image_depth"
 
-        self.status.setText(f"Added/updated point: {label} -> ({xyz[0]:.4f}, {xyz[1]:.4f}, {xyz[2]:.4f})")
-
-        if callable(self.on_dataset_changed_callback):
-            self.on_dataset_changed_callback()
+        self.accept()
