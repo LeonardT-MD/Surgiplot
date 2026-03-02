@@ -5,7 +5,7 @@ Single-image depth -> 3D reconstruction + buffered point picking dialog (OK comm
 separated from app.py.
 
 Dependencies (feature-only):
-  pip install -U numpy pillow matplotlib transformers torch
+  conda/pip install -U numpy pillow matplotlib transformers torch
 
 iPhone formats (HEIC/HEIF):
   pip install -U pillow-heif
@@ -40,14 +40,12 @@ LOG = logging.getLogger("surgiplot")
 try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
-    import matplotlib.pyplot as plt
 
     HAS_MPL = True
 except Exception:
     HAS_MPL = False
     FigureCanvas = None  # type: ignore
     Figure = None  # type: ignore
-    plt = None  # type: ignore
 
 
 # -------------------------
@@ -382,13 +380,27 @@ class PointCloudPicker3D(QtWidgets.QWidget):
         self._sc = None
         self.canvas.mpl_connect("pick_event", self._on_pick)
 
-    def set_xyz(self, xyz: np.ndarray):
+    def set_cloud(self, xyz: np.ndarray, colors: Optional[np.ndarray] = None):
+        """
+        xyz: (N,3)
+        colors: optional (N,3) float in [0,1] or uint8 in [0,255]
+        """
         if not HAS_MPL:
             return
 
         xyz = np.asarray(xyz, dtype=np.float32)
         if xyz.ndim != 2 or xyz.shape[1] != 3:
             raise ValueError("xyz must be (N,3)")
+
+        if colors is not None:
+            colors = np.asarray(colors)
+            if colors.ndim != 2 or colors.shape[1] != 3 or colors.shape[0] != xyz.shape[0]:
+                raise ValueError("colors must be (N,3) matching xyz")
+            if colors.dtype.kind in ("u", "i"):
+                colors = colors.astype(np.float32) / 255.0
+            else:
+                colors = colors.astype(np.float32)
+                colors = np.clip(colors, 0.0, 1.0)
 
         self._xyz = xyz
         self.ax.clear()
@@ -398,7 +410,9 @@ class PointCloudPicker3D(QtWidgets.QWidget):
 
         self._sc = self.ax.scatter(
             xyz[:, 0], xyz[:, 1], xyz[:, 2],
-            s=2, alpha=0.75, picker=6
+            s=2, alpha=0.95,
+            c=colors if colors is not None else None,
+            picker=6
         )
         self.ax.view_init(elev=20, azim=-60)
         self.canvas.draw_idle()
@@ -411,6 +425,86 @@ class PointCloudPicker3D(QtWidgets.QWidget):
             return
         i = int(ind[0])
         self.picked.emit(self._xyz[i].copy())
+
+
+# -------------------------
+# Embedded 2D scale picker dialog (NO external matplotlib window)
+# -------------------------
+class TwoClickScaleDialog(QtWidgets.QDialog):
+    """Embedded 2D image viewer: collect exactly 2 clicks in image pixel coords."""
+    def __init__(self, img_rgb: np.ndarray, parent=None):
+        super().__init__(parent)
+
+        if not HAS_MPL:
+            raise RuntimeError("Matplotlib missing")
+
+        self.setWindowTitle("Set scale: click TWO points (then OK)")
+        self.setModal(True)
+        self.resize(900, 600)
+
+        self.img_rgb = np.asarray(img_rgb, dtype=np.uint8)
+        self.pts: list[tuple[float, float]] = []
+
+        lay = QtWidgets.QVBoxLayout(self)
+
+        self.fig = Figure(figsize=(8, 5))
+        self.canvas = FigureCanvas(self.fig)
+        self.ax = self.fig.add_subplot(111)
+        lay.addWidget(self.canvas, 1)
+
+        btns = QtWidgets.QHBoxLayout()
+        self.lbl = QtWidgets.QLabel("Clicks: 0 / 2")
+        self.btn_clear = QtWidgets.QPushButton("Clear")
+        self.btn_ok = QtWidgets.QPushButton("OK")
+        self.btn_cancel = QtWidgets.QPushButton("Cancel")
+        self.btn_ok.setEnabled(False)
+
+        btns.addWidget(self.lbl, 1)
+        btns.addWidget(self.btn_clear)
+        btns.addWidget(self.btn_cancel)
+        btns.addWidget(self.btn_ok)
+        lay.addLayout(btns)
+
+        self.btn_clear.clicked.connect(self._clear)
+        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_ok.clicked.connect(self.accept)
+
+        self._redraw_base()
+        self.canvas.mpl_connect("button_press_event", self._on_click)
+        self.canvas.draw_idle()
+
+    def _redraw_base(self):
+        self.ax.clear()
+        self.ax.imshow(self.img_rgb)
+        self.ax.set_title("Click two points with known distance")
+        self.ax.axis("off")
+
+    def _clear(self):
+        self.pts.clear()
+        self._redraw_base()
+        self.lbl.setText("Clicks: 0 / 2")
+        self.btn_ok.setEnabled(False)
+        self.canvas.draw_idle()
+
+    def _on_click(self, event):
+        if event.inaxes != self.ax:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+        if len(self.pts) >= 2:
+            return
+
+        u, v = float(event.xdata), float(event.ydata)
+        self.pts.append((u, v))
+        self.ax.plot([u], [v], marker="o")
+        self.lbl.setText(f"Clicks: {len(self.pts)} / 2")
+
+        if len(self.pts) == 2:
+            (u1, v1), (u2, v2) = self.pts
+            self.ax.plot([u1, u2], [v1, v2], linewidth=2)
+            self.btn_ok.setEnabled(True)
+
+        self.canvas.draw_idle()
 
 
 # -------------------------
@@ -622,10 +716,15 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         depth_m = 0.2 + 0.8 * depth_rel
         self.depth_m = depth_m
 
-        xyz, _uv = backproject(depth_m, self.K, stride=int(self.stride_spin.value()))
+        xyz, uv = backproject(depth_m, self.K, stride=int(self.stride_spin.value()))
         self.xyz = xyz
 
-        self.picker.set_xyz(xyz)
+        # Color each point from the source image (so anatomy is interpretable)
+        u = np.clip(uv[:, 0].round().astype(np.int32), 0, w - 1)
+        v = np.clip(uv[:, 1].round().astype(np.int32), 0, h - 1)
+        colors = self.img_rgb[v, u, :].astype(np.float32) / 255.0  # (N,3)
+
+        self.picker.set_cloud(xyz, colors=colors)
         self.btn_scale.setEnabled(True)
         self.status.setText(
             "Reconstruction ready. Optional: set scale. Then click points in 3D; each click asks for a label and adds it to the pending list."
@@ -635,17 +734,13 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         if self.img_rgb is None or self.depth_m is None or self.K is None:
             return
 
-        plt.figure(figsize=(10, 6))
-        plt.imshow(self.img_rgb)
-        plt.title("Click TWO points with known real distance (close window after selecting).")
-        plt.axis("off")
-        pts = plt.ginput(2, timeout=0)
-        plt.close()
-
-        if len(pts) != 2:
+        dlg = TwoClickScaleDialog(self.img_rgb, parent=self)
+        if dlg.exec() != QtWidgets.QDialog.Accepted:
+            return
+        if len(dlg.pts) != 2:
             return
 
-        (u1, v1), (u2, v2) = pts
+        (u1, v1), (u2, v2) = dlg.pts
         try:
             p1 = self._pixel_to_xyz(u1, v1)
             p2 = self._pixel_to_xyz(u2, v2)
@@ -662,10 +757,16 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         scale = desired_m / dist
 
         self.depth_m = self.depth_m * scale
-        xyz, _uv = backproject(self.depth_m, self.K, stride=int(self.stride_spin.value()))
-        self.xyz = xyz
-        self.picker.set_xyz(xyz)
 
+        h, w = self.img_rgb.shape[:2]
+        xyz, uv = backproject(self.depth_m, self.K, stride=int(self.stride_spin.value()))
+        self.xyz = xyz
+
+        u = np.clip(uv[:, 0].round().astype(np.int32), 0, w - 1)
+        v = np.clip(uv[:, 1].round().astype(np.int32), 0, h - 1)
+        colors = self.img_rgb[v, u, :].astype(np.float32) / 255.0
+
+        self.picker.set_cloud(xyz, colors=colors)
         self.status.setText(f"Scale applied: ×{scale:.6f}. Continue clicking 3D points to add them to the pending list.")
 
     def _pixel_to_xyz(self, u: float, v: float) -> np.ndarray:
@@ -859,10 +960,3 @@ class SingleImage3DDialog(QtWidgets.QDialog):
 
         self.accept()
 
-
-# -------------------------
-# NOTE
-# -------------------------
-# If you see "QTextCursor::setPosition: Position '1' out of range",
-# it is NOT from this module (we do not touch QTextCursor).
-# It is usually from a QPlainTextEdit/QTextEdit cursor positioning on empty documents in app.py.
