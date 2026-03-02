@@ -14,4 +14,6 @@ dependencies:
   - torchaudio
   - pip
   - pip:
-      - -e ".[gui,ai]"
+      - -e .
+      - transformers
+      - accelerate
