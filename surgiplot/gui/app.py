@@ -13,9 +13,21 @@ Start flow (IMPORTANT change):
 
 Feature deps (only needed if you use the dialog):
   pip install -U numpy pillow matplotlib transformers torch
+
+Logging / verbosity (NEW):
+- This app configures a logger named "surgiplot" to:
+    1) print to terminal (INFO by default)
+    2) optionally stream to a GUI Log panel (dock)
+- Use the toolbar menu "Log" to switch INFO/DEBUG, clear, copy, etc.
+- single_image_depth.py logs detailed device selection (CUDA/MPS/CPU), timing, stats, etc.
 """
 
 from __future__ import annotations
+
+import logging
+import sys
+import traceback
+from typing import Optional
 
 import numpy as np
 from PySide6 import QtWidgets, QtCore
@@ -30,6 +42,16 @@ try:
 except Exception:
     SingleImage3DDialog = None  # type: ignore
     HAS_SINGLE_IMAGE_DIALOG = False
+
+
+# -------------------------
+# Logger (shared)
+# -------------------------
+LOG = logging.getLogger("surgiplot")
+
+
+def _format_exception(e: Exception) -> str:
+    return "".join(traceback.format_exception(type(e), e, e.__traceback__)).strip()
 
 
 # -------------------------
@@ -499,6 +521,7 @@ class DatasetPanel(QtWidgets.QWidget):
         rows = self.to_rows()
         self.ds.apply_labels_from_table(rows, overwrite=True)
         QtWidgets.QMessageBox.information(self, "Applied", "Labels applied to dataset.")
+        LOG.info("Applied labels to dataset. source=%s rows=%d", self.ds.meta.get("source"), len(rows))
         self.applied.emit()
 
 
@@ -675,6 +698,60 @@ class MetricPanel(QtWidgets.QWidget):
 
 
 # -------------------------
+# GUI log handler (NEW)
+# -------------------------
+class _LogEmitter(QtCore.QObject):
+    message = QtCore.Signal(str)
+
+
+class QtTextLogHandler(logging.Handler):
+    """Thread-safe-ish: emits Qt signal to append text in GUI."""
+    def __init__(self, emitter: _LogEmitter, level=logging.INFO):
+        super().__init__(level=level)
+        self._emitter = emitter
+
+    def emit(self, record: logging.LogRecord):
+        try:
+            msg = self.format(record)
+        except Exception:
+            msg = record.getMessage()
+        self._emitter.message.emit(msg)
+
+
+class LogDock(QtWidgets.QDockWidget):
+    def __init__(self, parent=None):
+        super().__init__("Log", parent)
+        self.setObjectName("SurgiplotLogDock")
+
+        w = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(w)
+
+        self.text = QtWidgets.QPlainTextEdit()
+        self.text.setReadOnly(True)
+        self.text.setMaximumBlockCount(5000)
+        lay.addWidget(self.text)
+
+        btns = QtWidgets.QHBoxLayout()
+        self.btn_clear = QtWidgets.QPushButton("Clear")
+        self.btn_copy = QtWidgets.QPushButton("Copy all")
+        btns.addWidget(self.btn_clear)
+        btns.addWidget(self.btn_copy)
+        btns.addStretch(1)
+        lay.addLayout(btns)
+
+        self.btn_clear.clicked.connect(self.text.clear)
+        self.btn_copy.clicked.connect(self._copy_all)
+
+        self.setWidget(w)
+
+    def append(self, line: str):
+        self.text.appendPlainText(line)
+
+    def _copy_all(self):
+        QtWidgets.QApplication.clipboard().setText(self.text.toPlainText())
+
+
+# -------------------------
 # Main window
 # -------------------------
 class MainWindow(QtWidgets.QMainWindow):
@@ -696,7 +773,16 @@ class MainWindow(QtWidgets.QMainWindow):
         splitter.addWidget(self.plot_panel)
         splitter.setSizes([420, 520, 460])
 
-        # Toolbar action for single-image points (optional "add more points" while already in workspace)
+        central = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(central)
+        lay.addWidget(splitter)
+        self.setCentralWidget(central)
+
+        # --- Log dock (NEW)
+        self.log_dock = LogDock(self)
+        self.addDockWidget(QtCore.Qt.BottomDockWidgetArea, self.log_dock)
+
+        # --- Tools toolbar
         tb = self.addToolBar("Tools")
         act_single = tb.addAction("Add points from single image…")
         act_single.triggered.connect(self._open_single_image_dialog)
@@ -704,15 +790,41 @@ class MainWindow(QtWidgets.QMainWindow):
             act_single.setEnabled(False)
             act_single.setToolTip("Install feature deps and ensure surgiplot/ai/single_image_depth.py is present.")
 
-        central = QtWidgets.QWidget()
-        lay = QtWidgets.QVBoxLayout(central)
-        lay.addWidget(splitter)
-        self.setCentralWidget(central)
+        # --- Log toolbar menu (NEW)
+        log_menu = QtWidgets.QMenu("Log", self)
+        act_info = log_menu.addAction("Set level: INFO")
+        act_debug = log_menu.addAction("Set level: DEBUG")
+        act_warn = log_menu.addAction("Set level: WARNING")
+        log_menu.addSeparator()
+        act_clear = log_menu.addAction("Clear log")
+        act_copy = log_menu.addAction("Copy log to clipboard")
+
+        act_info.triggered.connect(lambda: self._set_log_level(logging.INFO))
+        act_debug.triggered.connect(lambda: self._set_log_level(logging.DEBUG))
+        act_warn.triggered.connect(lambda: self._set_log_level(logging.WARNING))
+        act_clear.triggered.connect(self.log_dock.text.clear)
+        act_copy.triggered.connect(lambda: QtWidgets.QApplication.clipboard().setText(self.log_dock.text.toPlainText()))
+
+        btn_log = QtWidgets.QToolButton()
+        btn_log.setText("Log")
+        btn_log.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        btn_log.setMenu(log_menu)
+        tb.addWidget(btn_log)
 
         self.dataset_panel.applied.connect(self._on_dataset_applied)
         self.metric_panel.run_requested.connect(self._run_metric)
 
         self.plot_panel.plot_points(self.ds, title="Dataset overview")
+        LOG.info("Workspace opened. points=%d source=%s", len(getattr(self.ds, "points", {})), self.ds.meta.get("source"))
+
+    def connect_logger_to_gui(self, emitter: _LogEmitter):
+        emitter.message.connect(self.log_dock.append)
+
+    def _set_log_level(self, level: int):
+        # Set both root + surgiplot logger to be safe
+        logging.getLogger().setLevel(level)
+        LOG.setLevel(level)
+        LOG.info("Log level set to %s", logging.getLevelName(level))
 
     def _open_single_image_dialog(self):
         if not HAS_SINGLE_IMAGE_DIALOG or SingleImage3DDialog is None:
@@ -725,10 +837,14 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return
 
+        LOG.info("Opening SingleImage3DDialog (add points).")
         dlg = SingleImage3DDialog(self.ds, parent=self)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
+            LOG.info("SingleImage3DDialog accepted: dataset updated. points=%d", len(self.ds.points))
             self.dataset_panel.populate()
             self.plot_panel.plot_points(self.ds, title="Dataset updated (image points committed)")
+        else:
+            LOG.info("SingleImage3DDialog cancelled: dataset unchanged.")
 
     def _on_dataset_applied(self):
         self.dataset_panel.populate()
@@ -747,6 +863,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _run_metric(self, metric_name: str):
         try:
+            LOG.info("Run metric requested: %s", metric_name)
+
             if metric_name == "VOM_VOA":
                 entry_raw = self.metric_panel.split_names(self.metric_panel.vom_entry.text())
                 target_raw = self.metric_panel.split_names(self.metric_panel.vom_target.text())
@@ -900,7 +1018,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plot_panel.plot_area(self.ds, poly)
 
         except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "Error", str(e))
+            LOG.exception("Metric run failed: %s", metric_name)
+            QtWidgets.QMessageBox.critical(self, "Error", f"{e}\n\nDetails:\n{_format_exception(e)}")
 
 
 # -------------------------
@@ -912,7 +1031,7 @@ class StartWindow(QtWidgets.QWidget):
         self.setWindowTitle("Surgiplot")
         self.resize(760, 460)
 
-        self.main_window: MainWindow | None = None
+        self.main_window: Optional[MainWindow] = None
 
         layout = QtWidgets.QVBoxLayout(self)
 
@@ -1030,11 +1149,12 @@ class StartWindow(QtWidgets.QWidget):
                 )
                 return
 
-            # Start from an empty dataset
+            LOG.info("StartWindow: image mode selected. Creating empty dataset + opening dialog.")
             ds = load_points_from_manual([], names=None, source="single_image_depth", alias_points=False)
 
             dlg = SingleImage3DDialog(ds, parent=self)
             if dlg.exec() != QtWidgets.QDialog.Accepted:
+                LOG.info("StartWindow: image dialog cancelled. Staying on StartWindow.")
                 return
 
             self.main_window = MainWindow(ds)
@@ -1043,28 +1163,102 @@ class StartWindow(QtWidgets.QWidget):
             return
 
         # 2) File or manual
-        if self.rb_file.isChecked():
-            path = self.path_edit.text().strip()
-            if not path:
-                QtWidgets.QMessageBox.warning(self, "Missing file", "Please select an annotation file.")
-                return
-            ds = load_dataset(path, source=src, alias_points=True)
-        else:
-            raw = self.manual_text.toPlainText().strip()
-            if not raw:
-                QtWidgets.QMessageBox.warning(self, "Missing input", "Please paste coordinates for manual entry.")
-                return
-            ds = self._parse_manual(raw, source=src)
+        try:
+            if self.rb_file.isChecked():
+                path = self.path_edit.text().strip()
+                if not path:
+                    QtWidgets.QMessageBox.warning(self, "Missing file", "Please select an annotation file.")
+                    return
+                LOG.info("StartWindow: loading dataset from file: %s", path)
+                ds = load_dataset(path, source=src, alias_points=True)
+            else:
+                raw = self.manual_text.toPlainText().strip()
+                if not raw:
+                    QtWidgets.QMessageBox.warning(self, "Missing input", "Please paste coordinates for manual entry.")
+                    return
+                LOG.info("StartWindow: parsing manual entry.")
+                ds = self._parse_manual(raw, source=src)
+
+        except Exception as e:
+            LOG.exception("StartWindow: failed to load input.")
+            QtWidgets.QMessageBox.critical(self, "Load error", f"{e}\n\nDetails:\n{_format_exception(e)}")
+            return
 
         self.main_window = MainWindow(ds)
         self.main_window.show()
         self.close()
 
 
+# -------------------------
+# App entry + logging configuration (NEW)
+# -------------------------
+def _configure_logging() -> tuple[_LogEmitter, QtTextLogHandler]:
+    """
+    Configure:
+      - terminal handler (INFO default)
+      - GUI handler (INFO default) - connected later when MainWindow exists
+    Returns (emitter, gui_handler) so we can connect it to the MainWindow dock.
+    """
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+
+    # Avoid duplicate handlers if app is reloaded in an interactive environment
+    # (e.g., running main() multiple times).
+    if not getattr(_configure_logging, "_configured", False):
+        # Terminal handler
+        h_term = logging.StreamHandler(stream=sys.stdout)
+        h_term.setLevel(logging.INFO)
+        h_term.setFormatter(logging.Formatter("[%(levelname)s] %(name)s: %(message)s"))
+        root.addHandler(h_term)
+
+        setattr(_configure_logging, "_configured", True)
+
+    emitter = _LogEmitter()
+    gui_handler = QtTextLogHandler(emitter, level=logging.INFO)
+    gui_handler.setFormatter(logging.Formatter("[%(levelname)s] %(name)s: %(message)s"))
+
+    # Ensure the GUI handler is attached to root (so it receives everything)
+    root.addHandler(gui_handler)
+
+    return emitter, gui_handler
+
+
 def main():
     app = QtWidgets.QApplication([])
+
+    emitter, _gui_handler = _configure_logging()
+
+    # Global exception hook for anything uncaught in Qt callbacks
+    def _excepthook(exc_type, exc, tb):
+        msg = "".join(traceback.format_exception(exc_type, exc, tb)).strip()
+        try:
+            LOG.error("UNCAUGHT EXCEPTION:\n%s", msg)
+        except Exception:
+            pass
+        QtWidgets.QMessageBox.critical(None, "Uncaught exception", msg)
+
+    sys.excepthook = _excepthook
+
     w = StartWindow()
     w.show()
+
+    # When the workspace window is created, connect the GUI log emitter to its dock.
+    # We can do this by polling for the main_window reference.
+    timer = QtCore.QTimer()
+    timer.setInterval(250)
+
+    def _try_connect():
+        if w.main_window is not None:
+            try:
+                w.main_window.connect_logger_to_gui(emitter)
+                LOG.info("Connected logger to GUI log dock.")
+            except Exception:
+                pass
+            timer.stop()
+
+    timer.timeout.connect(_try_connect)
+    timer.start()
+
     app.exec()
 
 
