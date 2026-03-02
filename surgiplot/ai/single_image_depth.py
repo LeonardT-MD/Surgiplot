@@ -7,11 +7,14 @@ separated from app.py.
 Dependencies (feature-only):
   pip install -U numpy pillow matplotlib transformers torch
 
+iPhone formats (HEIC/HEIF):
+  pip install -U pillow-heif
+
 Notes:
 - Uses HuggingFace transformers "depth-estimation" pipeline (Depth Anything V2).
 - Depth is relative; scale can be set interactively from two 2D clicks (known distance in mm).
 - Click 3D point cloud -> prompt label -> point is stored in a PENDING buffer.
-- You can Rename/Delete/Clear pending points.
+- You can Rename/Delete/Undo/Clear pending points.
 - ONLY when you click OK: pending points are committed into ds.points[label] = xyz.
 - Cancel rejects without modifying ds.
 
@@ -107,6 +110,68 @@ def backproject(depth_m: np.ndarray, K: CameraIntrinsics, stride: int = 3) -> Tu
 
 
 # -------------------------
+# iPhone image support helpers (HEIC/HEIF)
+# -------------------------
+def _try_register_heif_opener() -> bool:
+    """
+    Try to register an HEIC/HEIF opener for Pillow.
+    Returns True if registration happened, False otherwise.
+    """
+    try:
+        import pillow_heif  # type: ignore
+
+        pillow_heif.register_heif_opener()
+        return True
+    except Exception:
+        return False
+
+
+def _open_image_rgb(path: str) -> np.ndarray:
+    """
+    Open an image (including iPhone HEIC/HEIF if pillow-heif installed) and return RGB uint8 ndarray.
+    """
+    try:
+        from PIL import Image
+    except Exception as e:
+        raise RuntimeError("Missing dependency: pillow. Install with: pip install pillow") from e
+
+    # best-effort HEIC/HEIF support
+    _try_register_heif_opener()
+
+    try:
+        img = Image.open(path).convert("RGB")
+    except Exception as e:
+        # Provide a very explicit actionable message.
+        ext = os.path.splitext(path)[1].lower()
+        msg = (
+            "Cannot open this image with Pillow on your system.\n\n"
+            f"File: {os.path.basename(path)}\n"
+            f"Extension: {ext or '(none)'}\n"
+            f"Error: {e}\n\n"
+            "If this is an iPhone HEIC/HEIF image, install HEIF support:\n"
+            "  pip install -U pillow-heif\n\n"
+            "Alternatively, convert the photo to JPG/PNG and try again."
+        )
+        raise RuntimeError(msg) from e
+
+    arr = np.array(img, dtype=np.uint8)
+    if arr.ndim != 3 or arr.shape[2] != 3:
+        raise RuntimeError("Loaded image is not RGB; unexpected format.")
+    return arr
+
+
+def _image_dialog_filter() -> str:
+    """
+    Qt file dialog filter. Includes common formats + iPhone HEIC/HEIF.
+    Case duplicated to match some Qt builds that are case-sensitive.
+    """
+    return (
+        "Images (*.png *.PNG *.jpg *.JPG *.jpeg *.JPEG *.tif *.TIF *.tiff *.TIFF *.bmp *.BMP *.webp *.WEBP "
+        "*.heic *.HEIC *.heif *.HEIF);;All files (*)"
+    )
+
+
+# -------------------------
 # Depth estimation (AI)
 # -------------------------
 class DepthEstimator:
@@ -133,7 +198,7 @@ class DepthEstimator:
         except Exception as e:
             raise RuntimeError("Missing dependency: torch. Install CPU or CUDA torch first.") from e
 
-        # NOTE: pipeline handles device selection; users can configure torch/cuda externally.
+        # pipeline handles device selection; users can configure torch/cuda externally.
         self._pipe = pipeline(task="depth-estimation", model=self.model_id)
 
     def predict_depth_raw(self, img_rgb: np.ndarray) -> np.ndarray:
@@ -392,27 +457,25 @@ class SingleImage3DDialog(QtWidgets.QDialog):
     # -------------------------
     def _load_image(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Select surgical image", "", "Images (*.png *.jpg *.jpeg *.tif *.tiff);;All files (*)"
+            self, "Select surgical image", "", _image_dialog_filter()
         )
         if not path:
             return
 
         try:
-            from PIL import Image
-        except Exception:
-            QtWidgets.QMessageBox.critical(self, "Missing dependency", "Install pillow: pip install pillow")
+            self.img_rgb = _open_image_rgb(path)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Cannot open image", str(e))
             return
 
         self.image_path = path
-        img = Image.open(path).convert("RGB")
-        self.img_rgb = np.array(img)
-
         h, w = self.img_rgb.shape[:2]
         self.K = CameraIntrinsics(w, h, float(self.fov_spin.value()))
         self.depth_m = None
         self.xyz = None
         self.btn_scale.setEnabled(False)
 
+        # Note: do not clear pending points automatically; user may want to keep them while swapping image.
         self.status.setText(f"Loaded: {os.path.basename(path)} ({w}×{h}). Now run depth + reconstruct.")
 
     def _run_depth(self):
@@ -495,8 +558,9 @@ class SingleImage3DDialog(QtWidgets.QDialog):
         if not np.isfinite(z) or z <= 0:
             raise ValueError("Invalid depth at selected pixel.")
 
-        x = (ui - self.K.cx) * z / K.fx  # type: ignore[name-defined]
-        y = (vi - self.K.cy) * z / K.fy  # type: ignore[name-defined]
+        # BUGFIX: use self.K.fx/self.K.fy (not K.fx)
+        x = (ui - self.K.cx) * z / self.K.fx
+        y = (vi - self.K.cy) * z / self.K.fy
         return np.array([x, y, z], dtype=float)
 
     # -------------------------
