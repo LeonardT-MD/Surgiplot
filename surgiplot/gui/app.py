@@ -1,49 +1,43 @@
 """
 surgiplot.gui.app
 
-Surgiplot GUI — single-file app (copy-paste ready)
+Surgiplot GUI — updated import-aware app
 
 Contains:
-- Qt (PySide6) GUI entrypoint with `main()` (fixes console script import).
-- Dataset loading + manual point loading + table display
-- Metric computation hooks (AOA_SF, VOM_VOA, AOE, DISTANCE_3D, AREA_3D)
-- Optional "Single image → 3D points…" dialog from `surgiplot.ai.single_image_depth`
+- Qt (PySide6) GUI entrypoint with `main()`
+- Navigation import (Stryker / Medtronic / auto-detect)
+- Formatted database import
+- Generic point-file import into existing dataset
+- Optional review / alias editor
+- Metric computation hooks
+- Optional single-image 3D dialog
 - Optional matplotlib 3D plotting
-
-IMPORTANT PySide6/Qt6:
-- QAction is in QtGui, NOT QtWidgets.
 """
 
 from __future__ import annotations
 
 import sys
 import traceback
-from typing import Dict, Optional, Any
+from pathlib import Path
+from typing import Dict, Optional, Any, List
 
 import numpy as np
 from PySide6 import QtWidgets, QtCore, QtGui
 
-# -------------------------
-# Core project imports
-# -------------------------
-from surgiplot.core.io.loaders import load_dataset, load_points_from_manual
+from surgiplot.core.io.loaders import load_dataset, load_navigation_file
 from surgiplot.metrics import VOM_VOA, AOA_SF, AOE, DISTANCE_3D, AREA_3D
+from surgiplot.gui.label_editor import run_label_editor
 
-# Optional AI dialog (kept separate)
 try:
-    from surgiplot.ai.single_image_depth import SingleImage3DDialog  # feature-only
+    from surgiplot.ai.single_image_depth import SingleImage3DDialog
     HAS_SINGLE_IMAGE_3D = True
 except Exception:
     SingleImage3DDialog = None  # type: ignore
     HAS_SINGLE_IMAGE_3D = False
 
-# -------------------------
-# Matplotlib (optional)
-# -------------------------
 try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
-
     HAS_MPL = True
 except Exception:
     FigureCanvas = None  # type: ignore
@@ -66,11 +60,80 @@ def _ensure_points_dict(ds) -> Dict[str, np.ndarray]:
     return ds.points
 
 
+def _ensure_aliases_dict(ds) -> Dict[str, str]:
+    if not hasattr(ds, "aliases") or ds.aliases is None:
+        ds.aliases = {}
+    if not isinstance(ds.aliases, dict):
+        raise TypeError("Dataset ds.aliases must be a dict[alias -> canonical_name]")
+    return ds.aliases
+
+
 def _as_xyz(arr: Any) -> np.ndarray:
     a = np.asarray(arr, dtype=float).reshape(-1)
     if a.size != 3:
         raise ValueError("Point must be 3D (x,y,z).")
     return a.reshape(3,)
+
+
+def _dataset_to_rows(ds) -> List[dict]:
+    pts = _ensure_points_dict(ds)
+    aliases = getattr(ds, "aliases", {}) or {}
+
+    reverse_aliases: Dict[str, List[str]] = {}
+    for alias, canonical in aliases.items():
+        reverse_aliases.setdefault(str(canonical), []).append(str(alias))
+
+    rows = []
+    for name in sorted(pts.keys()):
+        p = _as_xyz(pts[name])
+        labels = ", ".join(sorted(reverse_aliases.get(name, [])))
+        rows.append({
+            "name": name,
+            "x": float(p[0]),
+            "y": float(p[1]),
+            "z": float(p[2]),
+            "labels": labels,
+        })
+    return rows
+
+
+def _apply_rows_to_dataset(ds, rows: List[dict], source: str = "") -> None:
+    pts = _ensure_points_dict(ds)
+    aliases = _ensure_aliases_dict(ds)
+
+    pts.clear()
+    aliases.clear()
+
+    for row in rows:
+        name = str(row["name"]).strip()
+        xyz = np.array([float(row["x"]), float(row["y"]), float(row["z"])], dtype=float)
+        pts[name] = xyz
+
+        labels = str(row.get("labels", "") or "").strip()
+        if labels:
+            for alias in [x.strip() for x in labels.split(",") if x.strip()]:
+                aliases[alias] = name
+
+    if isinstance(getattr(ds, "meta", None), dict) and source:
+        ds.meta["source"] = source
+
+
+def _merge_rows_into_dataset(ds, rows: List[dict], source: str = "") -> None:
+    pts = _ensure_points_dict(ds)
+    aliases = _ensure_aliases_dict(ds)
+
+    for row in rows:
+        name = str(row["name"]).strip()
+        xyz = np.array([float(row["x"]), float(row["y"]), float(row["z"])], dtype=float)
+        pts[name] = xyz
+
+        labels = str(row.get("labels", "") or "").strip()
+        if labels:
+            for alias in [x.strip() for x in labels.split(",") if x.strip()]:
+                aliases[alias] = name
+
+    if isinstance(getattr(ds, "meta", None), dict) and source:
+        ds.meta["source"] = source
 
 
 # =============================================================================
@@ -145,7 +208,6 @@ class PlotPanel(QtWidgets.QWidget):
 
         self.clear(title)
 
-        # Try `result.plot(ax=...)` or `result.plot(ax)`
         try:
             if hasattr(result, "plot"):
                 try:
@@ -159,7 +221,6 @@ class PlotPanel(QtWidgets.QWidget):
         except Exception:
             pass
 
-        # If dict with "points"
         if isinstance(result, dict):
             pts = result.get("points", None)
             if isinstance(pts, dict):
@@ -184,8 +245,9 @@ class DatasetPanel(QtWidgets.QWidget):
         self.lbl_path = QtWidgets.QLabel("No dataset loaded.")
         self.lbl_path.setWordWrap(True)
 
-        self.btn_load = QtWidgets.QPushButton("Load dataset…")
-        self.btn_load_manual = QtWidgets.QPushButton("Import points (manual)…")
+        self.btn_import_nav = QtWidgets.QPushButton("Import navigation file…")
+        self.btn_import_db = QtWidgets.QPushButton("Import formatted database…")
+        self.btn_import_generic = QtWidgets.QPushButton("Import generic point file…")
         self.btn_save_points = QtWidgets.QPushButton("Export points table…")
         self.btn_clear_points = QtWidgets.QPushButton("Clear all points")
 
@@ -203,8 +265,9 @@ class DatasetPanel(QtWidgets.QWidget):
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
 
         top = QtWidgets.QHBoxLayout()
-        top.addWidget(self.btn_load)
-        top.addWidget(self.btn_load_manual)
+        top.addWidget(self.btn_import_nav)
+        top.addWidget(self.btn_import_db)
+        top.addWidget(self.btn_import_generic)
         top.addWidget(self.btn_single_image_3d)
         top.addStretch(1)
         top.addWidget(self.btn_save_points)
@@ -221,8 +284,9 @@ class DatasetPanel(QtWidgets.QWidget):
         lay.addLayout(mid)
         lay.addWidget(self.table, 1)
 
-        self.btn_load.clicked.connect(self._on_load_dataset)
-        self.btn_load_manual.clicked.connect(self._on_load_manual_points)
+        self.btn_import_nav.clicked.connect(self._on_import_navigation)
+        self.btn_import_db.clicked.connect(self._on_import_database)
+        self.btn_import_generic.clicked.connect(self._on_import_generic_points)
         self.btn_save_points.clicked.connect(self._on_export_points)
         self.btn_clear_points.clicked.connect(self._on_clear_points)
         self.btn_add_point.clicked.connect(self._on_add_point)
@@ -231,53 +295,132 @@ class DatasetPanel(QtWidgets.QWidget):
 
         self._refresh()
 
-    def _on_load_dataset(self):
+    def _choose_navigation_format(self) -> Optional[str]:
+        items = ["auto", "stryker", "medtronic"]
+        fmt, ok = QtWidgets.QInputDialog.getItem(
+            self,
+            "Navigation format",
+            "Choose import format:",
+            items,
+            0,
+            False,
+        )
+        if not ok:
+            return None
+        return str(fmt).strip().lower()
+
+    def _review_imported_dataset(self, imported_ds, default_source: str) -> Optional[tuple[list[dict], str]]:
+        rows = _dataset_to_rows(imported_ds)
+        return run_label_editor(rows=rows, source=default_source, parent=self)
+
+    def _on_import_navigation(self):
+        fmt = self._choose_navigation_format()
+        if fmt is None:
+            return
+
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
-            "Load Surgiplot dataset",
+            "Import neuronavigation file",
             "",
-            "Dataset files (*.json *.csv *.tsv *.xlsx *.pkl *.pickle);;All files (*)",
+            "Navigation files (*.txt *.dat *.json *.csv *.tsv);;All files (*)",
         )
         if not path:
             return
+
         try:
-            self.ds = load_dataset(path)
-            _ensure_points_dict(self.ds)
+            imported_ds = load_navigation_file(path, navigation_format=fmt)
+            reviewed = self._review_imported_dataset(imported_ds, default_source="navigation")
+            if reviewed is None:
+                return
+
+            rows, source = reviewed
+            if self.ds is None:
+                self.ds = imported_ds
+                _apply_rows_to_dataset(self.ds, rows, source=source)
+            else:
+                _merge_rows_into_dataset(self.ds, rows, source=source)
+
             if isinstance(getattr(self.ds, "meta", None), dict):
                 self.ds.meta["loaded_from"] = path
+                self.ds.meta["last_import_kind"] = "navigation"
+
         except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "Load dataset failed", f"{e}\n\n{_exc_text()}")
+            QtWidgets.QMessageBox.critical(self, "Navigation import failed", f"{e}\n\n{_exc_text()}")
             return
+
         self._refresh()
         self.dataset_changed.emit()
 
-    def _on_load_manual_points(self):
-        if self.ds is None:
-            QtWidgets.QMessageBox.warning(self, "No dataset", "Load a dataset first.")
-            return
+    def _on_import_database(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
-            "Import points from manual file",
+            "Import formatted database",
             "",
-            "Point files (*.csv *.tsv *.txt *.json);;All files (*)",
+            "Database files (*.xlsx *.xls *.csv *.tsv);;All files (*)",
         )
         if not path:
             return
+
         try:
-            pts = load_points_from_manual(path)
-            if not isinstance(pts, dict):
-                raise TypeError("load_points_from_manual must return dict[label->xyz]")
-            _ensure_points_dict(self.ds).update({str(k): _as_xyz(v) for k, v in pts.items()})
+            imported_ds = load_dataset(path, kind="database", source="database")
+            reviewed = self._review_imported_dataset(imported_ds, default_source="database")
+            if reviewed is None:
+                return
+
+            rows, source = reviewed
+            self.ds = imported_ds
+            _apply_rows_to_dataset(self.ds, rows, source=source)
+
+            if isinstance(getattr(self.ds, "meta", None), dict):
+                self.ds.meta["loaded_from"] = path
+                self.ds.meta["last_import_kind"] = "database"
+
         except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "Import points failed", f"{e}\n\n{_exc_text()}")
+            QtWidgets.QMessageBox.critical(self, "Database import failed", f"{e}\n\n{_exc_text()}")
             return
+
+        self._refresh()
+        self.dataset_changed.emit()
+
+    def _on_import_generic_points(self):
+        if self.ds is None:
+            QtWidgets.QMessageBox.warning(self, "No dataset", "Load or import a dataset first.")
+            return
+
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Import generic point file",
+            "",
+            "Point files (*.csv *.tsv *.txt);;All files (*)",
+        )
+        if not path:
+            return
+
+        try:
+            imported_ds = load_dataset(path, kind="generic", source="navigation")
+            reviewed = self._review_imported_dataset(imported_ds, default_source="navigation")
+            if reviewed is None:
+                return
+
+            rows, source = reviewed
+            _merge_rows_into_dataset(self.ds, rows, source=source)
+
+            if isinstance(getattr(self.ds, "meta", None), dict):
+                self.ds.meta["last_import_path"] = path
+                self.ds.meta["last_import_kind"] = "generic"
+
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Generic point import failed", f"{e}\n\n{_exc_text()}")
+            return
+
         self._refresh()
         self.dataset_changed.emit()
 
     def _on_export_points(self):
         if self.ds is None:
-            QtWidgets.QMessageBox.warning(self, "No dataset", "Load a dataset first.")
+            QtWidgets.QMessageBox.warning(self, "No dataset", "No dataset loaded.")
             return
+
         points = _ensure_points_dict(self.ds)
         if not points:
             QtWidgets.QMessageBox.information(self, "No points", "No points to export.")
@@ -291,10 +434,9 @@ class DatasetPanel(QtWidgets.QWidget):
 
         try:
             import csv
-
             with open(path, "w", newline="") as f:
                 w = csv.writer(f)
-                w.writerow(["label", "x", "y", "z"])
+                w.writerow(["name", "x", "y", "z"])
                 for lb in sorted(points.keys()):
                     p = _as_xyz(points[lb])
                     w.writerow([lb, float(p[0]), float(p[1]), float(p[2])])
@@ -316,13 +458,15 @@ class DatasetPanel(QtWidgets.QWidget):
         if resp != QtWidgets.QMessageBox.Yes:
             return
         _ensure_points_dict(self.ds).clear()
+        _ensure_aliases_dict(self.ds).clear()
         self._refresh()
         self.dataset_changed.emit()
 
     def _on_add_point(self):
         if self.ds is None:
-            QtWidgets.QMessageBox.warning(self, "No dataset", "Load a dataset first.")
+            QtWidgets.QMessageBox.warning(self, "No dataset", "Load or import a dataset first.")
             return
+
         label, ok = QtWidgets.QInputDialog.getText(self, "Point label", "Label:")
         if not ok:
             return
@@ -369,6 +513,12 @@ class DatasetPanel(QtWidgets.QWidget):
         if resp != QtWidgets.QMessageBox.Yes:
             return
         _ensure_points_dict(self.ds).pop(lb, None)
+
+        aliases = _ensure_aliases_dict(self.ds)
+        for alias in list(aliases.keys()):
+            if aliases[alias] == lb:
+                aliases.pop(alias, None)
+
         self._refresh()
         self.dataset_changed.emit()
 
@@ -382,7 +532,7 @@ class DatasetPanel(QtWidgets.QWidget):
             )
             return
         if self.ds is None:
-            QtWidgets.QMessageBox.warning(self, "No dataset", "Load a dataset first.")
+            QtWidgets.QMessageBox.warning(self, "No dataset", "Load or import a dataset first.")
             return
 
         dlg = SingleImage3DDialog(self.ds, on_dataset_changed_callback=self._on_ai_points_committed, parent=self)
@@ -405,10 +555,17 @@ class DatasetPanel(QtWidgets.QWidget):
         if not path:
             path = str(getattr(self.ds, "path", "") or "")
 
-        name = str(getattr(self.ds, "name", "") or "")
+        vendor = ""
+        source = ""
+        if isinstance(getattr(self.ds, "meta", None), dict):
+            vendor = str(self.ds.meta.get("vendor", "") or "")
+            source = str(self.ds.meta.get("source", "") or "")
+
         hdr = "Loaded dataset"
-        if name:
-            hdr += f": {name}"
+        if vendor:
+            hdr += f" | vendor: {vendor}"
+        if source:
+            hdr += f" | source: {source}"
         if path:
             hdr += f"\n{path}"
         self.lbl_path.setText(hdr)
@@ -491,14 +648,14 @@ class MetricPanel(QtWidgets.QWidget):
     def plot_points(self):
         ds = self._ds()
         if ds is None:
-            QtWidgets.QMessageBox.warning(self, "No dataset", "Load a dataset first.")
+            QtWidgets.QMessageBox.warning(self, "No dataset", "Load or import a dataset first.")
             return
         self.plot_panel.plot_points(_ensure_points_dict(ds), title="Dataset points")
 
     def compute_current(self):
         ds = self._ds()
         if ds is None:
-            QtWidgets.QMessageBox.warning(self, "No dataset", "Load a dataset first.")
+            QtWidgets.QMessageBox.warning(self, "No dataset", "Load or import a dataset first.")
             return
 
         metric_name = self.cmb_metric.currentText().strip()
@@ -620,7 +777,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _about(self):
         msg = (
             "Surgiplot GUI\n\n"
-            "- Load dataset + points\n"
+            "- Import navigation files (Stryker / Medtronic)\n"
+            "- Import formatted databases\n"
+            "- Import generic point files into an existing dataset\n"
             "- Compute AoA/SF, VOM/VoA, AoE, Distance, Area\n"
             "- Optional single-image 3D point collection (if installed)\n"
         )
@@ -637,7 +796,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
 # =============================================================================
-# QAction helper (FIXED: QAction is in QtGui)
+# QAction helper
 # =============================================================================
 class QtGuiAction(QtGui.QAction):
     def __init__(self, text, parent=None, shortcut: Optional[str] = None, triggered=None):
@@ -649,7 +808,7 @@ class QtGuiAction(QtGui.QAction):
 
 
 # =============================================================================
-# Entry point (fixes console script import)
+# Entry point
 # =============================================================================
 def main() -> None:
     app = QtWidgets.QApplication.instance()
