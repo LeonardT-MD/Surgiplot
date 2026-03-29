@@ -3,12 +3,13 @@ from __future__ import annotations
 from typing import List, Optional, Tuple
 from PySide6 import QtWidgets, QtCore
 
-_SOURCE_CHOICES = ["navigation", "photogrammetry", "scanner"]
+_SOURCE_CHOICES = ["navigation", "photogrammetry", "scanner", "database"]
+
 
 class LabelEditorDialog(QtWidgets.QDialog):
     def __init__(self, rows: List[dict], source: str = "", parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Surgiplot — Label points")
+        self.setWindowTitle("Surgiplot — Review imported points")
         self.resize(900, 500)
         self._rows = [dict(r) for r in rows]
         self._source = (source or "").strip().lower()
@@ -34,7 +35,10 @@ class LabelEditorDialog(QtWidgets.QDialog):
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["name", "x", "y", "z", "labels"])
         self.table.setRowCount(len(self._rows))
-        self.table.setEditTriggers(QtWidgets.QAbstractItemView.DoubleClicked | QtWidgets.QAbstractItemView.EditKeyPressed)
+        self.table.setEditTriggers(
+            QtWidgets.QAbstractItemView.DoubleClicked
+            | QtWidgets.QAbstractItemView.EditKeyPressed
+        )
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table.setAlternatingRowColors(True)
@@ -48,14 +52,17 @@ class LabelEditorDialog(QtWidgets.QDialog):
 
         layout.addWidget(self.table)
 
-        # Hint
-        hint = QtWidgets.QLabel("Tip: in 'labels' you can add comma-separated aliases (e.g., clinoid, ACP_medial).\n"
-                                "After OK, you can call points by either their original name or any label.")
+        hint = QtWidgets.QLabel(
+            "Tip: in 'labels' you can add comma-separated aliases "
+            "(e.g., clinoid, ACP_medial, target).\n"
+            "After OK, you can call points by either their canonical name or any alias."
+        )
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
-        # Buttons
-        btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
@@ -78,7 +85,8 @@ class LabelEditorDialog(QtWidgets.QDialog):
         src = self.src_combo.currentText().strip().lower()
         return out, src
 
-def run_label_editor(rows: List[dict], source: str = "") -> Optional[Tuple[List[dict], str]]:
+
+def run_label_editor(rows: List[dict], source: str = "", parent=None) -> Optional[Tuple[List[dict], str]]:
     """Run the labeling grid (Qt). Returns (rows, source) or None if cancelled."""
     app = QtWidgets.QApplication.instance()
     owns_app = False
@@ -86,7 +94,7 @@ def run_label_editor(rows: List[dict], source: str = "") -> Optional[Tuple[List[
         app = QtWidgets.QApplication([])
         owns_app = True
 
-    dlg = LabelEditorDialog(rows=rows, source=source)
+    dlg = LabelEditorDialog(rows=rows, source=source, parent=parent)
     res = dlg.exec()
     if res == QtWidgets.QDialog.Accepted:
         out = dlg.get_rows_and_source()
