@@ -1,0 +1,128 @@
+##############################
+# OS / SYSTEM
+##############################
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+##############################
+# PYTHON CORE
+##############################
+__pycache__/
+*.py[cod]
+*$py.class
+
+##############################
+# VIRTUAL ENVIRONMENTS
+##############################
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+##############################
+# PACKAGING / BUILD
+##############################
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+##############################
+# INSTALLER LOGS
+##############################
+pip-log.txt
+pip-delete-this-directory.txt
+
+##############################
+# TESTING / COVERAGE
+##############################
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+pytest_cache/
+nosetests.xml
+coverage.xml
+
+##############################
+# JUPYTER
+##############################
+.ipynb_checkpoints
+
+##############################
+# IDE / EDITORS
+##############################
+.vscode/
+.idea/
+*.swp
+*.swo
+
+##############################
+# LOGS
+##############################
+*.log
+
+##############################
+# ENV / SECRETS
+##############################
+.env
+.env.*
+*.env
+
+##############################
+# NUMPY / TORCH / SCIENTIFIC
+##############################
+*.npy
+*.npz
+
+##############################
+# TORCH / HF CACHE (CRITICAL)
+##############################
+.cache/
+.huggingface/
+transformers_cache/
+hf_cache/
+
+##############################
+# PYTORCH CHECKPOINTS / MODELS
+##############################
+*.pt
+*.pth
+*.ckpt
+*.bin
+
+##############################
+# DATA FILES (OPTIONAL - ADAPT)
+##############################
+data/
+datasets/
+*.csv
+*.tsv
+*.h5
+*.hdf5
+
+##############################
+# GUI / QT
+##############################
+*.ui.autosave
+
+##############################
+# MAC + PYTHON WEIRDNESS
+##############################
+.python-version
+
+##############################
+# MISC
+##############################
+*.bak
+*.tmp
+*.temp
