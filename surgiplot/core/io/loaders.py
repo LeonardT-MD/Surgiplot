@@ -61,6 +61,19 @@ def _parse_generic_points(text: str) -> List[Tuple[str, np.ndarray]]:
     return out
 
 
+def _looks_like_vendor_navigation_export(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if is_medtronic_json(text):
+        return True
+    if "[ANNOTATIONPOINT" in text.upper():
+        return True
+    if "file_version=" in text.lower():
+        return True
+    return False
+
+
 def _records_to_dataset(
     records: List[Dict[str, Any]],
     source: str,
@@ -177,7 +190,7 @@ def load_navigation_file(
 
     Current support:
       - Stryker (.txt/.dat)
-      - Medtronic (.json, LPS only)
+      - Medtronic (.json; auto-selects populated coordinate system and imports plans too)
       - generic fallback
     """
     fmt = (navigation_format or "auto").strip().lower()
@@ -203,7 +216,7 @@ def load_navigation_file(
         )
 
     if fmt == "medtronic":
-        records = parse_medtronic_annotations(text, coordinate_system="LPS")
+        records = parse_medtronic_annotations(text, coordinate_system="auto", include_plans=True)
         ds = _records_to_dataset(
             records,
             source="navigation",
@@ -211,7 +224,7 @@ def load_navigation_file(
             meta={
                 **(meta or {}),
                 "vendor": "medtronic",
-                "coordinate_system": "LPS",
+                "coordinate_system": records[0]["coordinate_system"] if records else "LPS",
                 "raw_format": "json",
             },
             alias_points=alias_points,
@@ -223,6 +236,11 @@ def load_navigation_file(
         raise NotImplementedError("Brainlab import not implemented yet.")
 
     pairs = _parse_generic_points(text)
+    if not pairs and _looks_like_vendor_navigation_export(text):
+        raise ValueError(
+            "This navigation export does not contain importable point annotations. "
+            "If this is a Stryker export, select the annotation-points file rather than planes or other metadata exports."
+        )
     records = [{"name": name, "xyz": xyz} for name, xyz in pairs]
     ds = _records_to_dataset(
         records,
@@ -305,6 +323,8 @@ def load_dataset(
     if kind == "generic":
         text = p.read_text(encoding="utf-8", errors="ignore")
         pairs = _parse_generic_points(text)
+        if not pairs:
+            raise ValueError("No importable 3D points were found in this file.")
         records = [{"name": name, "xyz": xyz} for name, xyz in pairs]
         return _records_to_dataset(
             records,
@@ -320,16 +340,17 @@ def load_dataset(
 
     try:
         detected = detect_navigation_format(p)
-        if detected in {"stryker", "medtronic"}:
-            return load_navigation_file(
-                p,
-                navigation_format=detected,
-                alias_points=alias_points,
-                point_prefix=point_prefix,
-                meta=meta,
-            )
     except Exception:
-        pass
+        detected = "generic"
+
+    if detected in {"stryker", "medtronic"}:
+        return load_navigation_file(
+            p,
+            navigation_format=detected,
+            alias_points=alias_points,
+            point_prefix=point_prefix,
+            meta=meta,
+        )
 
     if p.suffix.lower() in {".xlsx", ".xls", ".csv", ".tsv"}:
         try:
@@ -345,6 +366,11 @@ def load_dataset(
 
     text = p.read_text(encoding="utf-8", errors="ignore")
     pairs = _parse_generic_points(text)
+    if not pairs and _looks_like_vendor_navigation_export(text):
+        raise ValueError(
+            "This file looks like a vendor navigation export, but no point annotations were found. "
+            "Try the native annotation-points export file."
+        )
     records = [{"name": name, "xyz": xyz} for name, xyz in pairs]
     return _records_to_dataset(
         records,

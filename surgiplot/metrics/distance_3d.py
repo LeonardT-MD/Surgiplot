@@ -10,6 +10,22 @@ class Distance3DResult:
     distance_mm: float
     debug: Optional[Dict[str, Any]] = None
 
+    def plot(self, ax) -> None:
+        dbg = self.debug or {}
+        A = dbg.get("A")
+        B = dbg.get("B")
+        if A is None or B is None:
+            raise ValueError("Distance plot requires debug geometry.")
+
+        A = np.asarray(A, dtype=float).reshape(3,)
+        B = np.asarray(B, dtype=float).reshape(3,)
+        ax.plot([A[0], B[0]], [A[1], B[1]], [A[2], B[2]], color="tab:cyan", linewidth=2)
+        ax.scatter([A[0], B[0]], [A[1], B[1]], [A[2], B[2]], color="tab:cyan", s=40)
+        ax.set_title(f"Distance={self.distance_mm:.2f} mm")
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Z")
+
 
 def _resolve_point(data, spec) -> np.ndarray:
     if data is not None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, Any, List, Union
+import re
 import numpy as np
 
 PointLike = Union[np.ndarray, Iterable[float]]
@@ -86,6 +87,29 @@ class Dataset:
         if name in self.points:
             return name
 
+        # case-insensitive canonical match
+        low = name.lower()
+        for key in self.points:
+            if isinstance(key, str) and key.lower() == low:
+                return key
+
+        # common shorthand for canonical point names:
+        #   1        -> point_1
+        #   Point_1  -> point_1
+        #   point-1  -> point_1
+        point_idx = None
+        if name.isdigit():
+            point_idx = int(name)
+        else:
+            match = re.fullmatch(r"point[\s_-]*(\d+)", name, flags=re.IGNORECASE)
+            if match:
+                point_idx = int(match.group(1))
+
+        if point_idx is not None:
+            shorthand_key = f"point_{point_idx}"
+            if shorthand_key in self.points:
+                return shorthand_key
+
         # direct alias
         if name in self.aliases:
             target = self.aliases[name]
@@ -94,7 +118,6 @@ class Dataset:
             return target
 
         # case-insensitive alias match
-        low = name.lower()
         for a, tgt in self.aliases.items():
             if isinstance(a, str) and a.lower() == low:
                 if tgt not in self.points:

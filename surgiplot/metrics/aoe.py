@@ -10,6 +10,59 @@ class AOEResult:
     aoe_deg: float
     debug: Optional[Dict[str, Any]] = None
 
+    def plot(self, ax) -> None:
+        import numpy as np
+
+        # Clear the 3D axis and replace it with a simple polar-style 2D plot
+        fig = ax.figure
+        fig.clear()
+        pax = fig.add_subplot(111, projection="polar")
+
+        total = 360.0
+        angle = max(0.0, min(float(self.aoe_deg), total))
+        remaining = max(0.0, total - angle)
+
+        pax.set_theta_zero_location("N")
+        pax.set_theta_direction(-1)
+        pax.set_ylim(0, 1)
+        pax.set_yticks([])
+        pax.set_xticks(np.deg2rad(np.arange(0, 360, 45)))
+        pax.grid(alpha=0.25)
+
+        pax.bar(
+            x=np.deg2rad(angle / 2.0),
+            height=1.0,
+            width=np.deg2rad(angle),
+            bottom=0.0,
+            color="tab:green",
+            alpha=0.85,
+            edgecolor="white",
+            linewidth=1.0,
+        )
+        if remaining > 0:
+            pax.bar(
+                x=np.deg2rad(angle + remaining / 2.0),
+                height=1.0,
+                width=np.deg2rad(remaining),
+                bottom=0.0,
+                color="0.85",
+                alpha=0.65,
+                edgecolor="white",
+                linewidth=0.8,
+            )
+
+        pax.text(
+            0.0,
+            0.0,
+            f"AoE\n{self.aoe_deg:.2f}°",
+            ha="center",
+            va="center",
+            fontsize=13,
+            fontweight="bold",
+        )
+        pax.set_title("AoE · Angle of Exposure", va="bottom")
+        fig.canvas.draw_idle()
+
 
 def _resolve_point(data, spec) -> np.ndarray:
     """
