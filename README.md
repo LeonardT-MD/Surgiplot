@@ -1,3 +1,11 @@
+<p align="center">
+  <img src="docs/assets/SURGIPLOT_BANNER.png" alt="Surgiplot banner" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/LOGO_SURGIPLOT.png" alt="Surgiplot logo" width="180">
+</p>
+
 # Surgiplot
 
 Surgiplot is a local quantitative neuroanatomical measurement platform for reproducible geometric analysis of surgical corridors, operative angles, exposure metrics, point-derived surfaces, and landmark-based volumetry.
