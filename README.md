@@ -1,216 +1,164 @@
 # Surgiplot
 
-Surgiplot is a quantitative neuroanatomical measurement toolkit designed
-for reproducible geometric analysis of surgical corridors, operative
-angles, and exposure constraints in skull base and microsurgical
-approaches.
+Surgiplot is a local quantitative neuroanatomical measurement toolkit for reproducible geometric analysis of surgical corridors, operative angles, exposure metrics, and landmark-derived volumes.
 
 It supports both:
 
-1.  **Library mode** -- programmatic use in Python (terminal, IDE,
-    Jupyter)
-2.  **GUI mode** -- interactive PySide6/Qt application
+1. **Library mode** for Python scripting, terminals, and notebooks
+2. **GUI mode** for interactive dataset curation, 3D scene exploration, and metric analysis
 
 The framework standardizes advanced operative metrics including:
 
--   **VOM** -- Volume of Operative Maneuverability\
--   **sVOM** -- Standardized Volume of Operative Maneuverability\
--   **VoA** -- Visuo-Operative Angle\
--   **AoA** -- Angle of Attack\
--   **SF** -- Surgical Freedom\
--   **AOE** -- Angle of Exposure
+- **VoA** — Visuooperative Angle
+- **VOM** — Volume of Operative Maneuverability
+- **sVOM** — standardized VOM
+- **AoA** — Angle of Attack
+- **SF** — Surgical Freedom
+- **AoE** — Angle of Exposure
+- **AE** — Area of Exposure
+- **3D Distance**
+- **Volume**
 
 Surgiplot integrates coordinate datasets from:
 
--   Neuronavigation systems\
--   Photogrammetry reconstructions\
--   3D segmentation pipelines (e.g., 3D Slicer)\
--   Manual coordinate entry
+- neuronavigation systems
+- imported point tables
+- external 3D meshes / point clouds
+- manual coordinate entry
 
-------------------------------------------------------------------------
+## Core concept
 
-# Core Concept: Interactive Labeling Grid
-
-Regardless of input source (file import or manual), Surgiplot provides
-an interactive editable labeling grid.
+Regardless of input source, Surgiplot normalizes data into a shared editable dataset.
 
 Each dataset includes:
 
--   Raw coordinate points (`point_1`, `point_2`, ...)\
--   An editable `labels` column
+- canonical coordinate points (`point_1`, `point_2`, ...)
+- an editable `labels` column for anatomical aliases
 
-Users may assign semantic anatomical labels such as:
-
-    clinoid_A
-    clinoid_B
-    ICA_M1
-    BA_apex
-
-These labels can be referenced interchangeably with raw point IDs in all
-metric calls.
+Users may reference either the canonical point IDs or their semantic labels in all metric calls.
 
 Example:
 
-``` python
-entry=["point_1","point_2","point_3","point_4"]
+```python
+entry = ["point_1", "point_2", "point_3", "point_4"]
 ```
 
 or
 
-``` python
-entry=["clinoid_A","clinoid_B","clinoid_C","clinoid_D"]
+```python
+entry = ["clinoid_A", "clinoid_B", "clinoid_C", "clinoid_D"]
 ```
 
-------------------------------------------------------------------------
+## Installation
 
-# Installation
+### Recommended local setup
 
-## Recommended: Conda (Reproducible Scientific Environment)
+Surgiplot is designed to run locally. A conda or Miniforge environment is recommended for a stable scientific desktop stack.
 
-Surgiplot depends on a controlled scientific stack (NumPy, SciPy,
-PySide6/Qt, PyTorch).\
-To avoid platform inconsistencies, **Conda installation is strongly
-recommended**.
-
-### Quick Install
-
-``` bash
+```bash
 git clone https://github.com/LeonardT-MD/Surgiplot.git
 cd Surgiplot
 
-conda env create -f env/surgiplot_master.yml
-conda activate surgiplot_master
+conda create -n surgiplot python=3.11 pip -y
+conda activate surgiplot
 
-surgiplot_gui
+pip install -e .
 ```
 
-The provided environment:
+### Optional GPU-backed 3D scene backend
 
--   Uses `conda-forge`
--   Pins compatible versions of Qt, NumPy, SciPy, and PyTorch
--   Installs Surgiplot in editable mode
--   Optionally installs AI depth estimation dependencies
+For better imported mesh / point-cloud visualization in the 3D Scene Workspace, install the optional PyVista backend:
 
-------------------------------------------------------------------------
-
-## Editable Development Install (Advanced Users)
-
-``` bash
-pip install -e ".[ai]"
+```bash
+pip install -e ".[scene3d]"
 ```
 
-The `[ai]` extra installs optional AI modules for depth estimation.
+This installs:
 
-------------------------------------------------------------------------
+- `pyvista`
+- `pyvistaqt`
+- `vtk`
 
-# Running Surgiplot
+If `.[scene3d]` is not installed, Surgiplot falls back to the Matplotlib-based 3D viewer.
 
-## CLI / Library Mode
+### Local installer script
 
-``` bash
-surgiplot
+For users who prefer a single command, the bundled installer script creates a conda environment and installs the optional 3D scene backend:
+
+```bash
+bash surgiplot/scripts/install_conda.sh
 ```
 
-## GUI Mode
+## Running Surgiplot
 
-``` bash
+### GUI mode
+
+```bash
 surgiplot_gui
 ```
 
 The GUI supports:
 
--   Interactive point labeling
--   3D plotting
--   Metric configuration panels
--   Export to CSV/JSON
--   Automatic generation of reproducible Python snippets
+- interactive point labeling
+- external 3D scene import
+- local rescaling from two picked 3D points
+- landmark collection into the shared dataset
+- metric configuration panels
+- 3D plotting and overlay rendering
+- export to CSV / JSON
 
-------------------------------------------------------------------------
+### CLI / library mode
 
-# Library Usage
-
-``` python
-from surgiplot import load_dataset
-from surgiplot.metrics import VOM_VOA, AOA_SF, AOE
-
-ds = load_dataset("annotations.txt", source="navigation")
-ds = ds.edit_labels()
-
-res = VOM_VOA(
-    data=ds,
-    entry=["clinoid_A","clinoid_B","clinoid_C","clinoid_D"],
-    target=["BA_1","BA_2","BA_3","BA_4"],
-    stand_dist=10
-)
-
-aoe = AOE(data=ds, A="p1", B="pivot", C="p3")
+```bash
+surgiplot
 ```
 
-------------------------------------------------------------------------
+## 3D Scene Workspace
 
-# Scientific Methodology
+The optional 3D Scene Workspace allows local import of:
 
-## Volume of Operative Maneuverability (VOM)
+- `PLY`
+- `OBJ`
+- `STL`
+- `XYZ`
+- `CSV`
+- `TXT`
 
-The surgical corridor is modeled as a truncated ellipsoidal cone between
-entry and target polygons.\
-Polygons are projected via PCA, areas computed with the Shoelace
-formula, reconstructed in 3D, and approximated via ellipse fitting.\
-Volume is obtained via numerical integration.
+Supported workflow:
 
-sVOM standardizes corridor height (default 10 mm).
+1. import a point cloud or mesh
+2. preview it locally in 3D
+3. rescale the scene by clicking two 3D points and entering the real-world distance
+4. collect landmarks directly in the scene
+5. commit those landmarks into the Surgiplot dataset
+6. run the standard metrics and visualize them over the same coordinate system
 
-## Visuo-Operative Angle (VoA)
+## Scientific methodology
 
-VoA = 90° − \|acos( (v1·v2) / (\|\|v1\|\| \|\|v2\|\|) )\|
+### VOM / sVOM / VoA
 
-Where:
+Entry and target polygons are projected to best-fit PCA planes, converted into reference ellipses, reconstructed in 3D, and used to compute the corridor geometry. VoA is derived from the corridor trajectory relative to the target plane normal. The main VOM / sVOM output uses the physical 3D corridor geometry.
 
--   v1 = centroid-to-centroid trajectory vector\
--   v2 = target plane normal
+### AoA / SF
 
-Interpretation:
+Vertical and horizontal AoA are computed from the cranial-caudal-pivot and medial-lateral-pivot triangles. Optional standardization projects each entry point along its pivot ray to a fixed distance before recomputing standardized SF.
 
--   0° → trajectory parallel to target plane\
--   90° → perpendicular trajectory
+### AE
 
-------------------------------------------------------------------------
+Area is computed by projecting the ordered 3D polygon onto its PCA best-fit plane and applying the shoelace formula to that 2D polygon.
 
-# AI Module (Optional)
-
-Surgiplot includes an optional single-image depth estimation module
-based on HuggingFace Transformers.
-
-If AI dependencies are not installed:
-
--   The GUI remains fully functional\
--   Depth estimation is disabled gracefully
-
-To enable AI:
-
-``` bash
-pip install -e ".[ai]"
-```
-
-------------------------------------------------------------------------
-
-# Reproducibility
+## Reproducibility
 
 The GUI enables:
 
--   Export of labeled datasets (CSV / JSON)\
--   Copying of exact Python code corresponding to metric runs\
--   Deterministic re-execution in scripts or notebooks
+- export of labeled datasets
+- copying exact result payloads
+- deterministic re-execution in scripts or notebooks
 
-------------------------------------------------------------------------
+## License
 
-# License
+Specify your chosen license here.
 
-Specify your chosen license (e.g., MIT, BSD-3-Clause).
+## Citation
 
-------------------------------------------------------------------------
-
-# Citation
-
-If using Surgiplot in academic work, please cite the associated
-methodological publication.
+If you use Surgiplot in academic work, please cite the associated methodological publication.

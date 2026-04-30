@@ -28,7 +28,6 @@ class VOMVOAResult:
         cut_ellipse = dbg.get("svom_cut_ellipse_3d")
         cE = dbg.get("centroid_entry")
         cT = dbg.get("centroid_target")
-        normal = dbg.get("target_normal")
         full_surface = dbg.get("frustum_surface")
         svom_surface = dbg.get("svom_surface")
 
@@ -102,17 +101,23 @@ class VOMVOAResult:
             ax.scatter([cE[0], cT[0]], [cE[1], cT[1]], [cE[2], cT[2]], color="black", s=40)
             ax.plot([cE[0], cT[0]], [cE[1], cT[1]], [cE[2], cT[2]], color="black", linestyle="--", linewidth=1.4)
 
-        if cT is not None and normal is not None:
+        if cE is not None and cT is not None:
+            cE = np.asarray(cE, dtype=float).reshape(3,)
             cT = np.asarray(cT, dtype=float).reshape(3,)
-            normal = np.asarray(normal, dtype=float).reshape(3,)
-            scale = max(float(dbg.get("distance_h", 0.0) or 0.0) * 0.25, 1.0)
-            ax.quiver(
-                cT[0], cT[1], cT[2],
-                normal[0], normal[1], normal[2],
-                length=scale,
-                color="tab:purple",
-                normalize=True,
-            )
+            approach = cT - cE
+            norm = float(np.linalg.norm(approach))
+            if norm > 1e-9:
+                scale = max(float(dbg.get("distance_h", 0.0) or 0.0) * 0.25, 1.0)
+                direction = approach / norm
+                start = cT - direction * scale
+                all_plot_points.append(np.vstack([start, cT]))
+                ax.quiver(
+                    start[0], start[1], start[2],
+                    direction[0], direction[1], direction[2],
+                    length=scale,
+                    color="tab:purple",
+                    normalize=True,
+                )
 
         ax.set_title(
             f"VoA={self.voa_deg:.2f} deg | "

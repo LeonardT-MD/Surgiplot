@@ -5,7 +5,7 @@ from rich import print
 from rich.prompt import Prompt
 
 from surgiplot.core.io.loaders import load_dataset, load_points_from_manual
-from surgiplot.metrics import VOM_VOA, AOA_SF, AOE, DISTANCE_3D, AREA_3D
+from surgiplot.metrics import VOM_VOA, AOA_SF, AOE, DISTANCE_3D, AREA_3D, VOLUME_3D
 
 app = typer.Typer(help="Surgiplot CLI (loads points, opens labeling grid, then runs metrics).")
 
@@ -80,7 +80,7 @@ def launch():
 
     _label_grid(ds)
     print(f"Loaded {len(ds.points)} points with {len(ds.aliases)} aliases. Source={ds.meta.get('source','')}")
-    print("Run CLI metric commands (vom-voa / aoa-sf / aoe / distance-3d / area-3d), or use the GUI via `surgiplot_gui`.")
+    print("Run CLI metric commands (vom-voa / aoa-sf / aoe / distance-3d / area-3d / volume-3d), or use the GUI via `surgiplot_gui`.")
 
 
 @app.command("vom-voa")
@@ -128,7 +128,6 @@ def aoa_sf(
     entry: str = typer.Option("", "--entry", help="Legacy: comma-separated entry points"),
     target: str = typer.Option("", "--target", help="Legacy: single pivot point name/label"),
 
-    constraints: str = typer.Option("", "--constraints", help="Optional constraints (comma-separated)"),
 ):
     """Compute AOA_SF via CLI. Opens labeling grid before computation."""
     if file is None:
@@ -164,20 +163,17 @@ def aoa_sf(
         entry_names = _resolve_list(ds, _split_csv(entry))
         target_name = _resolve_one(ds, target)
 
-    cons = _split_csv(constraints)
-    cons = _resolve_list(ds, cons) if cons else None
-
     res = AOA_SF(
         data=ds,
         entry=entry_names,
         target=target_name,
-        constraints=cons,
         return_debug=False,
     )
     print({
         "AoA_vertical_deg": res.aoa_vertical_deg,
         "AoA_horizontal_deg": res.aoa_horizontal_deg,
-        "SF_proxy_mm2": res.sf_proxy_mm2,
+        "SF_area_mm2": res.sf_entry_area_mm2,
+        "SF_area_standardized_mm2": res.sf_entry_area_rescaled_mm2,
     })
 
 
@@ -245,6 +241,25 @@ def area_3d(
 
     res = AREA_3D(data=ds, polygon=poly_names, return_debug=False)
     print({"area_mm2": res.area_mm2})
+
+
+@app.command("volume-3d")
+def volume_3d(
+    file: str = typer.Option(None, "--file", help="Annotation file path"),
+    source: str = typer.Option(None, "--source", help="navigation|photogrammetry|scanner"),
+    points: str = typer.Option(..., "--points", help="Comma-separated point names/labels (>=4)"),
+):
+    """Estimate closed-solid volume (mm^3) from sparse 3D boundary points. Opens labeling grid."""
+    if file is None:
+        raise typer.BadParameter("--file is required for this command (use `launch` for manual mode).")
+
+    src = (source or "navigation").strip().lower()
+    ds = load_dataset(file, source=src, alias_points=True)
+    _label_grid(ds)
+
+    point_names = _resolve_list(ds, _split_csv(points))
+    res = VOLUME_3D(data=ds, points=point_names, return_debug=False)
+    print({"volume_mm3": res.volume_mm3})
 
 
 def main():
