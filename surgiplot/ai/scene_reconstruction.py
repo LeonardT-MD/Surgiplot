@@ -52,6 +52,7 @@ class ReconstructionProfile:
     render_limit: int
     face_limit: int
     description: str
+    render_mode: str = "balanced"
 
 
 def _module_available(name: str) -> bool:
@@ -97,23 +98,27 @@ def _recommended_profile(hardware: HardwareProfile) -> ReconstructionProfile:
             return ReconstructionProfile(
                 render_limit=180000,
                 face_limit=0,
-                description="PyVista preview is active, so imported meshes are rendered from their original triangle surface by default. Point clouds still use a lightweight local point cap for stable interaction.",
+                description="PyVista preview is active. Balanced mode preserves the imported mesh by default while keeping interaction stable for typical local use.",
+                render_mode="balanced",
             )
         return ReconstructionProfile(
             render_limit=90000,
             face_limit=0,
-            description="PyVista preview is active, so imported meshes are rendered from their original triangle surface by default. Point clouds still use a lightweight local point cap for stable interaction.",
+            description="PyVista preview is active. Balanced mode preserves the imported mesh by default while keeping interaction stable for typical local use.",
+            render_mode="balanced",
         )
     if high_mem:
         return ReconstructionProfile(
             render_limit=60000,
             face_limit=30000,
             description="High-memory local preview stays closer to the original scene while still trimming the heaviest geometry for stable interaction.",
+            render_mode="balanced",
         )
     return ReconstructionProfile(
         render_limit=36000,
         face_limit=18000,
         description="Standard local preview preserves more of the imported scene while still reducing the render load for reliable interaction.",
+        render_mode="balanced",
     )
 
 
@@ -764,6 +769,9 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         self.faces_limit_spin.setRange(0, 250000)
         self.faces_limit_spin.setSingleStep(5000)
         self.faces_limit_spin.setValue(int(self._active_profile.face_limit))
+        self.preview_mode_combo = QtWidgets.QComboBox()
+        self.preview_mode_combo.addItems(["Fast", "Balanced", "Quality"])
+        self.preview_mode_combo.setCurrentText("Balanced")
 
         self.lbl_runtime = QtWidgets.QLabel(
             "Load a point cloud, mesh, or 3D model, rescale it from two picked points, then collect landmarks for downstream analysis."
@@ -803,6 +811,8 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         controls.addWidget(self.points_limit_spin, 0, 4)
         controls.addWidget(QtWidgets.QLabel("Face limit:"), 0, 5)
         controls.addWidget(self.faces_limit_spin, 0, 6)
+        controls.addWidget(QtWidgets.QLabel("Preview:"), 0, 7)
+        controls.addWidget(self.preview_mode_combo, 0, 8)
         controls.addWidget(QtWidgets.QLabel("Known Distance:"), 1, 0)
         controls.addWidget(self.scale_cm_spin, 1, 1)
         controls.addWidget(self.btn_set_scale, 1, 2)
@@ -846,6 +856,7 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         self.btn_select_scene.clicked.connect(self._select_scene)
         self.btn_run.clicked.connect(self._run_reconstruction)
         self.btn_optimize.clicked.connect(self._apply_preview_settings)
+        self.preview_mode_combo.currentTextChanged.connect(self._on_preview_mode_changed)
         self.btn_set_scale.toggled.connect(self._on_scale_mode_toggled)
         self.btn_collect.toggled.connect(self._set_collect_mode)
         self.btn_cancel.clicked.connect(self.reject)
@@ -865,13 +876,14 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
     def _refresh_runtime_status(self) -> None:
         status = check_runtime()
         hardware = self._hardware.platform_summary
+        preview_mode = self.preview_mode_combo.currentText().strip()
         if status.available:
             self.lbl_runtime.setText(
                 f"{status.message}\n"
                 f"Source: Imported 3D Scene | Device: {status.device}\n"
                 f"Viewer backend: {self.picker.backend}\n"
                 f"Hardware: {hardware}\n"
-                f"Preview point limit: {int(self.points_limit_spin.value())} | face limit: {int(self.faces_limit_spin.value())}\n"
+                f"Preview mode: {preview_mode} | point limit: {int(self.points_limit_spin.value())} | face limit: {int(self.faces_limit_spin.value())}\n"
                 f"{self._active_profile.description}"
             )
         else:
@@ -885,6 +897,7 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         self._active_profile = _recommended_profile(self._hardware)
         self.points_limit_spin.setValue(int(self._active_profile.render_limit))
         self.faces_limit_spin.setValue(int(self._active_profile.face_limit))
+        self.preview_mode_combo.setCurrentText(self._active_profile.render_mode.capitalize())
         self._refresh_runtime_status()
 
     def _current_profile(self) -> ReconstructionProfile:
@@ -892,7 +905,21 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
             render_limit=int(self.points_limit_spin.value()),
             face_limit=int(self.faces_limit_spin.value()),
             description=self._active_profile.description,
+            render_mode=self.preview_mode_combo.currentText().strip().lower(),
         )
+
+    def _on_preview_mode_changed(self, mode: str) -> None:
+        mode_norm = str(mode or "Balanced").strip().lower()
+        if mode_norm == "fast":
+            self.points_limit_spin.setValue(35000 if HAS_PYVISTA else 24000)
+            self.faces_limit_spin.setValue(18000 if HAS_PYVISTA else 12000)
+        elif mode_norm == "quality":
+            self.points_limit_spin.setValue(180000 if HAS_PYVISTA else 60000)
+            self.faces_limit_spin.setValue(0 if HAS_PYVISTA else 30000)
+        else:
+            self.points_limit_spin.setValue(int(self._active_profile.render_limit))
+            self.faces_limit_spin.setValue(int(self._active_profile.face_limit))
+        self._refresh_runtime_status()
 
     def _apply_preview_settings(self) -> None:
         self._refresh_runtime_status()
@@ -1057,7 +1084,7 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
             "3D scene ready.\n"
             f"Preview vertices: {len(self._merged_xyz_m)}"
             + (f" | preview faces: {face_count}\n" if face_count > 0 else "\n")
-            + f"Current preview limits: points {int(self.points_limit_spin.value())}, faces {int(self.faces_limit_spin.value())}.\n"
+            + f"Current preview mode: {self.preview_mode_combo.currentText()} | points {int(self.points_limit_spin.value())} | faces {int(self.faces_limit_spin.value())}.\n"
             + "Use 0 to keep the original geometry for that layer. Adjust the limits if needed, click Reload Preview, then set scale from two 3D points and collect landmarks for analysis."
         )
 
@@ -1070,6 +1097,8 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
             surface = self._surface_triangles_mm * self._scene_scale_to_mm
         show_surface = surface is not None and len(surface) > 0
         show_points = not show_surface
+        if hasattr(self.picker, "set_render_profile"):
+            self.picker.set_render_profile(self.preview_mode_combo.currentText().strip().lower())
         self.picker.set_cloud(
             cloud,
             colors=self._merged_colors,

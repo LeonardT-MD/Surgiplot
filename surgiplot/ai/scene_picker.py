@@ -44,6 +44,14 @@ class PointCloudPicker3D(QtWidgets.QWidget):
         self._unit_label = "scene"
         self._center_on_click = False
         self._corner_axes_visible = True
+        self._render_profile = "balanced"
+        self._interaction_lod_active = False
+        self._interaction_observers_added = False
+        self._current_point_colors: Optional[np.ndarray] = None
+        self._current_surface_triangles: Optional[np.ndarray] = None
+        self._current_surface_colors: Optional[np.ndarray] = None
+        self._current_show_points = True
+        self._current_show_surface = True
         self._scale_preview_active = False
         self._scale_anchor: Optional[np.ndarray] = None
         self._mouse_move_observer_added = False
@@ -111,7 +119,7 @@ class PointCloudPicker3D(QtWidgets.QWidget):
                 border: 1px solid #d7e1eb;
                 border-radius: 12px;
             }
-            QPushButton {
+            QPushButton, QToolButton {
                 background: #ffffff;
                 color: #203044;
                 border: 1px solid #c9d6e2;
@@ -119,11 +127,11 @@ class PointCloudPicker3D(QtWidgets.QWidget):
                 padding: 6px 10px;
                 font-weight: 600;
             }
-            QPushButton:hover {
+            QPushButton:hover, QToolButton:hover {
                 background: #f6f9fc;
                 border-color: #aebfd0;
             }
-            QPushButton:pressed {
+            QPushButton:pressed, QToolButton:pressed {
                 background: #e6eef7;
                 border-color: #95abc2;
             }
@@ -138,7 +146,9 @@ class PointCloudPicker3D(QtWidgets.QWidget):
         row.setSpacing(8)
 
         specs = [
-            ("Reset", self.reset_view),
+            ("Reset View", self.reset_view),
+            ("Zoom In", lambda: self.zoom_view(0.82)),
+            ("Zoom Out", lambda: self.zoom_view(1.22)),
             ("Fit", self.fit_scene),
             ("Iso", self.view_isometric),
             ("Top", self.view_top),
@@ -146,14 +156,23 @@ class PointCloudPicker3D(QtWidgets.QWidget):
             ("Left", self.view_left),
         ]
         for label, handler in specs:
-            btn = QtWidgets.QPushButton(label)
+            btn = QtWidgets.QToolButton()
+            btn.setText(label)
+            btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+            btn.setAutoRaise(False)
             btn.clicked.connect(handler)
             row.addWidget(btn)
-        self.btn_center_on_click = QtWidgets.QPushButton("Center View on Click")
+        self.btn_center_on_click = QtWidgets.QToolButton()
+        self.btn_center_on_click.setText("Center View on Click")
+        self.btn_center_on_click.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+        self.btn_center_on_click.setAutoRaise(False)
         self.btn_center_on_click.setCheckable(True)
         self.btn_center_on_click.toggled.connect(self._set_center_on_click)
         row.addWidget(self.btn_center_on_click)
-        self.btn_corner_axes = QtWidgets.QPushButton("Corner XYZ")
+        self.btn_corner_axes = QtWidgets.QToolButton()
+        self.btn_corner_axes.setText("Corner XYZ")
+        self.btn_corner_axes.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+        self.btn_corner_axes.setAutoRaise(False)
         self.btn_corner_axes.setCheckable(True)
         self.btn_corner_axes.setChecked(True)
         self.btn_corner_axes.toggled.connect(self._set_corner_axes_visible)
@@ -169,19 +188,21 @@ class PointCloudPicker3D(QtWidgets.QWidget):
             self._plotter.set_background("#f8fafc", top="#edf3f8")
         except Exception:
             self._plotter.set_background("#f8fafc")
-        try:
-            self._plotter.enable_anti_aliasing()
-        except Exception:
-            pass
-        try:
-            self._plotter.enable_depth_peeling()
-        except Exception:
-            pass
+        if self._render_profile == "quality":
+            try:
+                self._plotter.enable_anti_aliasing()
+            except Exception:
+                pass
+            try:
+                self._plotter.enable_depth_peeling()
+            except Exception:
+                pass
         try:
             self._plotter.enable_trackball_style()
         except Exception:
             pass
         self._ensure_pyvista_mouse_tracking()
+        self._ensure_pyvista_interaction_observers()
         self._add_pyvista_overlays()
 
     def _add_pyvista_overlays(self) -> None:
@@ -244,6 +265,12 @@ class PointCloudPicker3D(QtWidgets.QWidget):
         except Exception:
             pass
 
+    def set_render_profile(self, profile: str) -> None:
+        profile = str(profile or "balanced").strip().lower()
+        if profile not in {"fast", "balanced", "quality"}:
+            profile = "balanced"
+        self._render_profile = profile
+
     def _ensure_pyvista_mouse_tracking(self) -> None:
         if self._plotter is None or self._mouse_move_observer_added:
             return
@@ -255,6 +282,21 @@ class PointCloudPicker3D(QtWidgets.QWidget):
         try:
             interactor.add_observer("MouseMoveEvent", self._on_pyvista_mouse_move)
             self._mouse_move_observer_added = True
+        except Exception:
+            pass
+
+    def _ensure_pyvista_interaction_observers(self) -> None:
+        if self._plotter is None or self._interaction_observers_added:
+            return
+        interactor = getattr(self._plotter, "iren", None)
+        if interactor is None:
+            interactor = getattr(self._plotter, "interactor", None)
+        if interactor is None:
+            return
+        try:
+            interactor.add_observer("StartInteractionEvent", self._on_pyvista_interaction_start)
+            interactor.add_observer("EndInteractionEvent", self._on_pyvista_interaction_end)
+            self._interaction_observers_added = True
         except Exception:
             pass
 
@@ -332,17 +374,15 @@ class PointCloudPicker3D(QtWidgets.QWidget):
         self._xyz = xyz
         self._unit_label = unit_label
         point_colors = self._normalize_colors(colors, len(xyz))
+        self._current_point_colors = point_colors
+        self._current_surface_triangles = None if surface_triangles is None else np.asarray(surface_triangles, dtype=np.float32)
+        self._current_surface_colors = None if surface_colors is None else np.asarray(surface_colors)
+        self._current_show_points = bool(show_points)
+        self._current_show_surface = bool(show_surface)
+        self._interaction_lod_active = False
 
         if HAS_PYVISTA and self._plotter is not None:
-            self._set_cloud_pyvista(
-                xyz,
-                point_colors,
-                surface_triangles,
-                surface_colors,
-                show_points,
-                show_surface,
-                unit_label,
-            )
+            self._set_cloud_pyvista(xyz, point_colors, surface_triangles, surface_colors, show_points, show_surface, unit_label)
             return
 
         if not HAS_MPL:
@@ -367,8 +407,15 @@ class PointCloudPicker3D(QtWidgets.QWidget):
         show_points: bool,
         show_surface: bool,
         unit_label: str,
+        preserve_camera: bool = False,
     ) -> None:
         assert self._plotter is not None and pv is not None
+        camera_position = None
+        if preserve_camera:
+            try:
+                camera_position = self._plotter.camera_position
+            except Exception:
+                camera_position = None
         self._plotter.clear()
         self._configure_pyvista_scene()
 
@@ -387,54 +434,59 @@ class PointCloudPicker3D(QtWidgets.QWidget):
                 face_cols = self._normalize_colors(surface_colors, face_count) if surface_colors is not None else None
                 if face_cols is not None:
                     surf.cell_data["rgb"] = np.clip(face_cols * 255.0, 0, 255).astype(np.uint8)
+                    smooth = self._render_profile != "fast"
+                    opacity = 0.98 if self._render_profile == "quality" else 0.95
                     self._surface_actor = self._plotter.add_mesh(
                         surf,
                         scalars="rgb",
                         rgb=True,
-                        opacity=1.0,
+                        opacity=opacity,
                         show_edges=False,
-                        smooth_shading=True,
-                        ambient=0.26,
-                        diffuse=0.82,
-                        specular=0.10,
-                        specular_power=12,
+                        smooth_shading=smooth,
+                        ambient=0.20 if self._render_profile == "fast" else 0.26,
+                        diffuse=0.78 if self._render_profile == "fast" else 0.82,
+                        specular=0.04 if self._render_profile == "fast" else 0.10,
+                        specular_power=6 if self._render_profile == "fast" else 12,
                         interpolate_before_map=True,
                         name="scene_surface",
                     )
                 else:
+                    smooth = self._render_profile != "fast"
                     self._surface_actor = self._plotter.add_mesh(
                         surf,
                         color="#b7c0d6",
-                        opacity=0.98,
+                        opacity=0.96 if self._render_profile == "quality" else 0.92,
                         show_edges=False,
-                        smooth_shading=True,
-                        ambient=0.26,
-                        diffuse=0.82,
-                        specular=0.10,
-                        specular_power=12,
+                        smooth_shading=smooth,
+                        ambient=0.20 if self._render_profile == "fast" else 0.26,
+                        diffuse=0.78 if self._render_profile == "fast" else 0.82,
+                        specular=0.04 if self._render_profile == "fast" else 0.10,
+                        specular_power=6 if self._render_profile == "fast" else 12,
                         name="scene_surface",
                     )
 
         if show_points:
             cloud = pv.PolyData(xyz)
+            point_size = 3.2 if (show_surface and self._render_profile == "fast") else (4.0 if show_surface else 5.5)
+            point_opacity = 0.72 if (show_surface and self._render_profile == "fast") else (0.86 if show_surface else 0.98)
             if point_colors is not None:
                 cloud.point_data["rgb"] = np.clip(point_colors * 255.0, 0, 255).astype(np.uint8)
                 self._point_actor = self._plotter.add_mesh(
                     cloud,
                     scalars="rgb",
                     rgb=True,
-                    point_size=4.5 if show_surface else 5.5,
+                    point_size=point_size,
                     render_points_as_spheres=True,
-                    opacity=0.92 if show_surface else 0.98,
+                    opacity=point_opacity,
                     name="scene_points",
                 )
             else:
                 self._point_actor = self._plotter.add_mesh(
                     cloud,
                     color="#94a3b8",
-                    point_size=4.5 if show_surface else 5.5,
+                    point_size=point_size,
                     render_points_as_spheres=True,
-                    opacity=0.92 if show_surface else 0.98,
+                    opacity=point_opacity,
                     name="scene_points",
                 )
         self._set_pyvista_bounds()
@@ -442,8 +494,97 @@ class PointCloudPicker3D(QtWidgets.QWidget):
             self._enable_pyvista_surface_picking()
         elif show_points:
             self._enable_pyvista_point_picking()
+        if camera_position is not None:
+            try:
+                self._plotter.camera_position = camera_position
+                self._plotter.render()
+                return
+            except Exception:
+                pass
         self.view_isometric()
         self.fit_scene()
+
+    def _interaction_point_limit(self) -> int:
+        if self._render_profile == "quality":
+            return 30000
+        if self._render_profile == "balanced":
+            return 18000
+        return 10000
+
+    def _interaction_face_limit(self) -> int:
+        if self._render_profile == "quality":
+            return 40000
+        if self._render_profile == "balanced":
+            return 24000
+        return 12000
+
+    def _downsample_points_for_interaction(self, xyz: np.ndarray, colors: Optional[np.ndarray]) -> tuple[np.ndarray, Optional[np.ndarray]]:
+        pts = np.asarray(xyz, dtype=np.float32)
+        cols = None if colors is None else np.asarray(colors)
+        limit = self._interaction_point_limit()
+        if len(pts) <= limit:
+            return pts, cols
+        idx = np.linspace(0, len(pts) - 1, num=limit, dtype=int)
+        return pts[idx], cols[idx] if cols is not None and len(cols) == len(pts) else cols
+
+    def _downsample_surface_for_interaction(self, tris: np.ndarray, colors: Optional[np.ndarray]) -> tuple[np.ndarray, Optional[np.ndarray]]:
+        surf = np.asarray(tris, dtype=np.float32)
+        cols = None if colors is None else np.asarray(colors)
+        limit = self._interaction_face_limit()
+        if len(surf) <= limit:
+            return surf, cols
+        idx = np.linspace(0, len(surf) - 1, num=limit, dtype=int)
+        return surf[idx], cols[idx] if cols is not None and len(cols) == len(surf) else cols
+
+    def _on_pyvista_interaction_start(self, *_args) -> None:
+        if self._plotter is None or self._interaction_lod_active:
+            return
+        if self._current_surface_triangles is None and self._xyz is None:
+            return
+        heavy_surface = self._current_surface_triangles is not None and len(self._current_surface_triangles) > self._interaction_face_limit()
+        heavy_points = self._xyz is not None and len(self._xyz) > self._interaction_point_limit()
+        if not heavy_surface and not heavy_points:
+            return
+        xyz = self._xyz if self._xyz is not None else np.empty((0, 3), dtype=np.float32)
+        point_colors = self._current_point_colors
+        surface = self._current_surface_triangles
+        surface_colors = self._current_surface_colors
+        if heavy_points:
+            xyz, point_colors = self._downsample_points_for_interaction(xyz, point_colors)
+        if heavy_surface and surface is not None:
+            surface, surface_colors = self._downsample_surface_for_interaction(surface, surface_colors)
+        try:
+            self._interaction_lod_active = True
+            self._set_cloud_pyvista(
+                xyz,
+                point_colors,
+                surface,
+                surface_colors,
+                self._current_show_points,
+                self._current_show_surface,
+                self._unit_label,
+                preserve_camera=True,
+            )
+        except Exception:
+            self._interaction_lod_active = False
+
+    def _on_pyvista_interaction_end(self, *_args) -> None:
+        if self._plotter is None or not self._interaction_lod_active or self._xyz is None:
+            return
+        try:
+            self._interaction_lod_active = False
+            self._set_cloud_pyvista(
+                self._xyz,
+                self._current_point_colors,
+                self._current_surface_triangles,
+                self._current_surface_colors,
+                self._current_show_points,
+                self._current_show_surface,
+                self._unit_label,
+                preserve_camera=True,
+            )
+        except Exception:
+            pass
 
     def _set_cloud_matplotlib(
         self,
@@ -705,3 +846,37 @@ class PointCloudPicker3D(QtWidgets.QWidget):
                 pass
             return
         self._set_mpl_view(0, 180)
+
+    def zoom_view(self, factor: float) -> None:
+        factor = float(max(factor, 1e-3))
+        if HAS_PYVISTA and self._plotter is not None:
+            try:
+                camera = getattr(self._plotter, "camera", None)
+                if camera is not None and hasattr(camera, "Zoom"):
+                    camera.Zoom(1.0 / factor)
+                    self._plotter.render()
+                    return
+            except Exception:
+                pass
+            try:
+                self._plotter.reset_camera_clipping_range()
+                self._plotter.render()
+            except Exception:
+                pass
+            return
+        if not HAS_MPL or self.ax is None or self.canvas is None:
+            return
+        try:
+            xlim = np.asarray(self.ax.get_xlim3d(), dtype=float)
+            ylim = np.asarray(self.ax.get_ylim3d(), dtype=float)
+            zlim = np.asarray(self.ax.get_zlim3d(), dtype=float)
+            mids = np.array([xlim.mean(), ylim.mean(), zlim.mean()], dtype=float)
+            xrad = 0.5 * (xlim[1] - xlim[0]) * factor
+            yrad = 0.5 * (ylim[1] - ylim[0]) * factor
+            zrad = 0.5 * (zlim[1] - zlim[0]) * factor
+            self.ax.set_xlim3d([mids[0] - xrad, mids[0] + xrad])
+            self.ax.set_ylim3d([mids[1] - yrad, mids[1] + yrad])
+            self.ax.set_zlim3d([mids[2] - zrad, mids[2] + zrad])
+            self.canvas.draw_idle()
+        except Exception:
+            pass
