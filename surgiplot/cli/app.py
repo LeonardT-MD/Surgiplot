@@ -1,266 +1,417 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any, Iterable, Optional
+
 import typer
-from rich import print
-from rich.prompt import Prompt
+from rich import print as rich_print
+from rich.table import Table
 
-from surgiplot.core.io.loaders import load_dataset, load_points_from_manual
-from surgiplot.metrics import VOM_VOA, AOA_SF, AOE, DISTANCE_3D, AREA_3D, VOLUME_3D
+from surgiplot import (
+    AOA,
+    AOA_SF,
+    AOE,
+    AREA_3D,
+    DISTANCE_3D,
+    SF,
+    SVOM,
+    VOA,
+    VOM,
+    VOM_VOA,
+    VOLUME_3D,
+    __version__,
+    apply_labels,
+    load,
+    rename_points,
+)
 
-app = typer.Typer(help="Surgiplot CLI (loads points, opens labeling grid, then runs metrics).")
-
-
-def _prompt_source() -> str:
-    return Prompt.ask(
-        "Source of data",
-        choices=["navigation", "photogrammetry", "scanner"],
-        default="navigation",
-    )
-
-
-def _label_grid(ds):
-    # Always open interactive grid as requested
-    ds.edit_labels()
-    return ds
-
-
-def _split_csv(s: str) -> list[str]:
-    return [x.strip() for x in (s or "").split(",") if x.strip()]
-
-
-def _resolve_list(ds, names: list[str]) -> list[str]:
-    if hasattr(ds, "resolve_names"):
-        return ds.resolve_names(names)
-    return names
+app = typer.Typer(
+    help="Surgiplot CLI for reproducible neurosurgical coordinate analysis.",
+    no_args_is_help=True,
+)
+dataset_app = typer.Typer(help="Dataset inspection, relabeling, and export.", no_args_is_help=True)
+metric_app = typer.Typer(help="Metric computation commands for scripting pipelines.", no_args_is_help=True)
+app.add_typer(dataset_app, name="dataset")
+app.add_typer(metric_app, name="metric")
 
 
-def _resolve_one(ds, name: str) -> str:
-    name = (name or "").strip()
-    if hasattr(ds, "resolve_name"):
-        return ds.resolve_name(name)
-    return name
+@app.command("version")
+def version() -> None:
+    _emit_json({"package": "surgiplot", "version": __version__})
 
 
-@app.command()
-def launch():
-    """Interactive launcher (file/manual) -> labeling grid."""
-    mode = Prompt.ask("Input mode", choices=["file", "manual"], default="file")
-    source = _prompt_source()
-
-    if mode == "file":
-        path = Prompt.ask("Path to annotation file")
-        ds = load_dataset(path, source=source, alias_points=True)
-    else:
-        print("Paste points line-by-line. End with an empty line.")
-        lines = []
-        while True:
-            ln = input()
-            if not ln.strip():
-                break
-            lines.append(ln.strip())
-
-        pts = []
-        names = []
-        for ln in lines:
-            parts = ln.split()
-            if len(parts) == 4:
-                names.append(parts[0])
-                pts.append([float(parts[1]), float(parts[2]), float(parts[3])])
-            elif len(parts) == 3:
-                pts.append([float(parts[0]), float(parts[1]), float(parts[2])])
-            else:
-                raise typer.BadParameter(f"Bad line: {ln}")
-
-        ds = load_points_from_manual(
-            pts,
-            names=names if names else None,
-            source=source,
-            alias_points=True,
-        )
-
-    _label_grid(ds)
-    print(f"Loaded {len(ds.points)} points with {len(ds.aliases)} aliases. Source={ds.meta.get('source','')}")
-    print("Run CLI metric commands (vom-voa / aoa-sf / aoe / distance-3d / area-3d / volume-3d), or use the GUI via `surgiplot_gui`.")
+def _split_csv(raw: str) -> list[str]:
+    return [item.strip() for item in (raw or "").split(",") if item.strip()]
 
 
-@app.command("vom-voa")
-def vom_voa(
-    file: str = typer.Option(None, "--file", help="Annotation file path"),
-    source: str = typer.Option(None, "--source", help="navigation|photogrammetry|scanner"),
-    entry: str = typer.Option(..., "--entry", help="Comma-separated entry point names/labels"),
-    target: str = typer.Option(..., "--target", help="Comma-separated target point names/labels"),
-    stand_dist: float = typer.Option(10.0, "--stand-dist", help="Standard distance for sVOM"),
+def _pairs(values: Iterable[str], option_name: str) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for value in values:
+        text = str(value or "").strip()
+        if "=" not in text:
+            raise typer.BadParameter(f"{option_name} expects KEY=VALUE entries.")
+        key, val = text.split("=", 1)
+        key = key.strip()
+        val = val.strip()
+        if not key or not val:
+            raise typer.BadParameter(f"{option_name} expects non-empty KEY=VALUE entries.")
+        mapping[key] = val
+    return mapping
+
+
+def _load_dataset_for_cli(
+    file: str,
+    *,
+    source: str = "",
+    kind: str = "auto",
+    navigation_format: str = "auto",
+    edit_labels: bool = False,
 ):
-    """Compute VOM_VOA via CLI. Opens labeling grid before computation."""
-    if file is None:
-        raise typer.BadParameter("--file is required for this command (use `launch` for manual mode).")
+    dataset = load(
+        file,
+        source=source,
+        kind=kind,
+        navigation_format=navigation_format,
+        alias_points=True,
+    )
+    if edit_labels:
+        dataset.edit_labels()
+    return dataset
 
-    src = (source or "navigation").strip().lower()
-    ds = load_dataset(file, source=src, alias_points=True)
-    _label_grid(ds)
 
-    entry_names = _resolve_list(ds, _split_csv(entry))
-    target_names = _resolve_list(ds, _split_csv(target))
+def _resolve_names(dataset, names: Iterable[str]) -> list[str]:
+    return dataset.resolve_names(names) if hasattr(dataset, "resolve_names") else list(names)
 
-    res = VOM_VOA(
-        data=ds,
-        entry=entry_names,
-        target=target_names,
+
+def _resolve_name(dataset, name: str) -> str:
+    return dataset.resolve_name(name) if hasattr(dataset, "resolve_name") else name
+
+
+def _emit_json(payload: dict[str, Any]) -> None:
+    rich_print_json = json.dumps(payload, indent=2, sort_keys=True)
+    rich_print(rich_print_json)
+
+
+def _save_dataset(dataset, out: str) -> None:
+    out_path = Path(out)
+    suffix = out_path.suffix.lower()
+    if suffix == ".json":
+        dataset.export_json(str(out_path))
+        return
+    if suffix in {".csv", ".tsv"}:
+        dataset.export_csv(str(out_path))
+        return
+    raise typer.BadParameter("Output dataset file must end in .json, .csv, or .tsv.")
+
+
+@dataset_app.command("summary")
+def dataset_summary(
+    file: str = typer.Argument(..., help="Input dataset or annotation file."),
+    source: str = typer.Option("", "--source", help="navigation|photogrammetry|scanner|database"),
+    kind: str = typer.Option("auto", "--kind", help="auto|navigation|database|generic"),
+    navigation_format: str = typer.Option("auto", "--navigation-format", help="auto|stryker|medtronic|brainlab|generic"),
+):
+    dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
+    table = Table(title="Surgiplot Dataset Summary")
+    table.add_column("Field", style="bold cyan")
+    table.add_column("Value", style="white")
+    table.add_row("Points", str(len(dataset.points)))
+    table.add_row("Aliases", str(len([a for a, tgt in dataset.aliases.items() if a != tgt and a not in dataset.points])))
+    table.add_row("Source", str(dataset.meta.get("source", "")))
+    table.add_row("Coordinate system", str(dataset.meta.get("coordinate_system", "")))
+    table.add_row("Path", str(dataset.meta.get("path", file)))
+    rich_print(table)
+
+
+@dataset_app.command("labels")
+def dataset_labels(
+    file: str = typer.Argument(..., help="Input dataset or annotation file."),
+    source: str = typer.Option("", "--source", help="navigation|photogrammetry|scanner|database"),
+    kind: str = typer.Option("auto", "--kind", help="auto|navigation|database|generic"),
+    navigation_format: str = typer.Option("auto", "--navigation-format", help="auto|stryker|medtronic|brainlab|generic"),
+    label: list[str] = typer.Option(None, "--label", help="Set labels with POINT=label1,label2"),
+    rename: list[str] = typer.Option(None, "--rename", help="Rename canonical points with OLD=NEW"),
+    out: Optional[str] = typer.Option(None, "--out", help="Write updated dataset to .json/.csv/.tsv"),
+):
+    dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
+    rename_map = _pairs(rename or [], "--rename")
+    if rename_map:
+        rename_points(dataset, rename_map)
+    label_map = {
+        name: _split_csv(labels)
+        for name, labels in _pairs(label or [], "--label").items()
+    }
+    if label_map:
+        apply_labels(dataset, label_map)
+
+    table = Table(title="Surgiplot Point Labels")
+    table.add_column("Point", style="bold cyan")
+    table.add_column("Preferred label", style="green")
+    table.add_column("Aliases", style="white")
+    for name in sorted(dataset.points):
+        aliases = ", ".join(dataset.labels_for_point(name))
+        table.add_row(name, dataset.preferred_label(name), aliases)
+    rich_print(table)
+
+    if out:
+        _save_dataset(dataset, out)
+        rich_print(f"[green]Saved[/green] updated dataset to {out}")
+
+
+@dataset_app.command("export")
+def dataset_export(
+    file: str = typer.Argument(..., help="Input dataset or annotation file."),
+    out: str = typer.Argument(..., help="Output path (.json/.csv/.tsv)."),
+    source: str = typer.Option("", "--source", help="navigation|photogrammetry|scanner|database"),
+    kind: str = typer.Option("auto", "--kind", help="auto|navigation|database|generic"),
+    navigation_format: str = typer.Option("auto", "--navigation-format", help="auto|stryker|medtronic|brainlab|generic"),
+):
+    dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
+    _save_dataset(dataset, out)
+    rich_print(f"[green]Saved[/green] normalized dataset to {out}")
+
+
+@metric_app.command("vom-voa")
+def metric_vom_voa(
+    file: str = typer.Argument(..., help="Input dataset or annotation file."),
+    entry: str = typer.Option(..., "--entry", help="Comma-separated entry point names/labels."),
+    target: str = typer.Option(..., "--target", help="Comma-separated target point names/labels."),
+    stand_dist: float = typer.Option(10.0, "--stand-dist", help="Standard distance for sVOM."),
+    source: str = typer.Option("", "--source", help="navigation|photogrammetry|scanner|database"),
+    kind: str = typer.Option("auto", "--kind", help="auto|navigation|database|generic"),
+    navigation_format: str = typer.Option("auto", "--navigation-format", help="auto|stryker|medtronic|brainlab|generic"),
+):
+    dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
+    result = VOM_VOA(
+        data=dataset,
+        entry=_resolve_names(dataset, _split_csv(entry)),
+        target=_resolve_names(dataset, _split_csv(target)),
         stand_dist=stand_dist,
         return_debug=False,
     )
-    print({"VoA_deg": res.voa_deg, "VOM_mm3": res.vom_mm3, "sVOM_mm3": res.svom_mm3})
+    _emit_json(
+        {
+            "VoA_deg": result.voa_deg,
+            "VOM_mm3": result.vom_mm3,
+            "sVOM_mm3": result.svom_mm3,
+        }
+    )
 
 
-@app.command("aoa-sf")
-def aoa_sf(
-    file: str = typer.Option(None, "--file", help="Annotation file path"),
-    source: str = typer.Option(None, "--source", help="navigation|photogrammetry|scanner"),
-
-    # New preferred interface (matches GUI spec)
-    cranial: str = typer.Option("", "--cranial", help="Cranial entry point name/label"),
-    caudal: str = typer.Option("", "--caudal", help="Caudal entry point name/label"),
-    medial: str = typer.Option("", "--medial", help="Medial entry point name/label"),
-    lateral: str = typer.Option("", "--lateral", help="Lateral entry point name/label"),
-    pivot: str = typer.Option("", "--pivot", help="Pivot point name/label"),
-
-    # Backward-compatible legacy interface
-    entry: str = typer.Option("", "--entry", help="Legacy: comma-separated entry points"),
-    target: str = typer.Option("", "--target", help="Legacy: single pivot point name/label"),
-
+@metric_app.command("vom")
+def metric_vom(
+    file: str = typer.Argument(...),
+    entry: str = typer.Option(..., "--entry"),
+    target: str = typer.Option(..., "--target"),
+    stand_dist: float = typer.Option(10.0, "--stand-dist"),
+    source: str = typer.Option("", "--source"),
+    kind: str = typer.Option("auto", "--kind"),
+    navigation_format: str = typer.Option("auto", "--navigation-format"),
 ):
-    """Compute AOA_SF via CLI. Opens labeling grid before computation."""
-    if file is None:
-        raise typer.BadParameter("--file is required for this command (use `launch` for manual mode).")
+    dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
+    result = VOM(data=dataset, entry=_resolve_names(dataset, _split_csv(entry)), target=_resolve_names(dataset, _split_csv(target)), stand_dist=stand_dist)
+    _emit_json({"VOM_mm3": result.volume_mm3})
 
-    src = (source or "navigation").strip().lower()
-    ds = load_dataset(file, source=src, alias_points=True)
-    _label_grid(ds)
 
-    # Determine which mode to use
-    use_new = all([
-        (cranial or "").strip(),
-        (caudal or "").strip(),
-        (medial or "").strip(),
-        (lateral or "").strip(),
-        (pivot or "").strip(),
-    ])
+@metric_app.command("voa")
+def metric_voa(
+    file: str = typer.Argument(...),
+    entry: str = typer.Option(..., "--entry"),
+    target: str = typer.Option(..., "--target"),
+    stand_dist: float = typer.Option(10.0, "--stand-dist"),
+    source: str = typer.Option("", "--source"),
+    kind: str = typer.Option("auto", "--kind"),
+    navigation_format: str = typer.Option("auto", "--navigation-format"),
+):
+    dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
+    result = VOA(data=dataset, entry=_resolve_names(dataset, _split_csv(entry)), target=_resolve_names(dataset, _split_csv(target)), stand_dist=stand_dist)
+    _emit_json({"VoA_deg": result.angle_deg})
 
-    if use_new:
-        cran = _resolve_one(ds, cranial)
-        caud = _resolve_one(ds, caudal)
-        med = _resolve_one(ds, medial)
-        lat = _resolve_one(ds, lateral)
-        piv = _resolve_one(ds, pivot)
-        entry_names = [cran, caud, med, lat]
-        target_name = piv
-    else:
-        if not entry.strip() or not target.strip():
-            raise typer.BadParameter(
-                "Provide either --cranial --caudal --medial --lateral --pivot, "
-                "or legacy --entry and --target."
-            )
-        entry_names = _resolve_list(ds, _split_csv(entry))
-        target_name = _resolve_one(ds, target)
 
-    res = AOA_SF(
-        data=ds,
-        entry=entry_names,
-        target=target_name,
+@metric_app.command("svom")
+def metric_svom(
+    file: str = typer.Argument(...),
+    entry: str = typer.Option(..., "--entry"),
+    target: str = typer.Option(..., "--target"),
+    stand_dist: float = typer.Option(10.0, "--stand-dist"),
+    source: str = typer.Option("", "--source"),
+    kind: str = typer.Option("auto", "--kind"),
+    navigation_format: str = typer.Option("auto", "--navigation-format"),
+):
+    dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
+    result = SVOM(data=dataset, entry=_resolve_names(dataset, _split_csv(entry)), target=_resolve_names(dataset, _split_csv(target)), stand_dist=stand_dist)
+    _emit_json({"sVOM_mm3": result.volume_mm3})
+
+
+@metric_app.command("aoa-sf")
+def metric_aoa_sf(
+    file: str = typer.Argument(..., help="Input dataset or annotation file."),
+    cranial: str = typer.Option(..., "--cranial"),
+    caudal: str = typer.Option(..., "--caudal"),
+    medial: str = typer.Option(..., "--medial"),
+    lateral: str = typer.Option(..., "--lateral"),
+    pivot: str = typer.Option(..., "--pivot"),
+    sf_rescale_radius_mm: Optional[float] = typer.Option(None, "--sf-rescale-radius-mm"),
+    source: str = typer.Option("", "--source"),
+    kind: str = typer.Option("auto", "--kind"),
+    navigation_format: str = typer.Option("auto", "--navigation-format"),
+):
+    dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
+    entry = [
+        _resolve_name(dataset, cranial),
+        _resolve_name(dataset, caudal),
+        _resolve_name(dataset, medial),
+        _resolve_name(dataset, lateral),
+    ]
+    result = AOA_SF(
+        data=dataset,
+        entry=entry,
+        target=_resolve_name(dataset, pivot),
+        sf_rescale_radius_mm=sf_rescale_radius_mm,
         return_debug=False,
     )
-    print({
-        "AoA_vertical_deg": res.aoa_vertical_deg,
-        "AoA_horizontal_deg": res.aoa_horizontal_deg,
-        "SF_area_mm2": res.sf_entry_area_mm2,
-        "SF_area_standardized_mm2": res.sf_entry_area_rescaled_mm2,
-    })
+    _emit_json(
+        {
+            "AoA_vertical_deg": result.aoa_vertical_deg,
+            "AoA_horizontal_deg": result.aoa_horizontal_deg,
+            "SF_area_mm2": result.sf_entry_area_mm2,
+            "SF_area_standardized_mm2": result.sf_entry_area_rescaled_mm2,
+        }
+    )
 
 
-@app.command("aoe")
-def aoe(
-    file: str = typer.Option(None, "--file", help="Annotation file path"),
-    source: str = typer.Option(None, "--source", help="navigation|photogrammetry|scanner"),
-    a: str = typer.Option(..., "--A", help="Point A name/label"),
-    b: str = typer.Option(..., "--B", help="Point B (pivot) name/label"),
-    c: str = typer.Option(..., "--C", help="Point C name/label"),
+@metric_app.command("aoa")
+def metric_aoa(
+    file: str = typer.Argument(...),
+    cranial: str = typer.Option(..., "--cranial"),
+    caudal: str = typer.Option(..., "--caudal"),
+    medial: str = typer.Option(..., "--medial"),
+    lateral: str = typer.Option(..., "--lateral"),
+    pivot: str = typer.Option(..., "--pivot"),
+    sf_rescale_radius_mm: Optional[float] = typer.Option(None, "--sf-rescale-radius-mm"),
+    source: str = typer.Option("", "--source"),
+    kind: str = typer.Option("auto", "--kind"),
+    navigation_format: str = typer.Option("auto", "--navigation-format"),
 ):
-    """Compute AOE via CLI. Opens labeling grid before computation."""
-    if file is None:
-        raise typer.BadParameter("--file is required for this command (use `launch` for manual mode).")
+    dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
+    result = AOA(
+        data=dataset,
+        entry=[
+            _resolve_name(dataset, cranial),
+            _resolve_name(dataset, caudal),
+            _resolve_name(dataset, medial),
+            _resolve_name(dataset, lateral),
+        ],
+        target=_resolve_name(dataset, pivot),
+        sf_rescale_radius_mm=sf_rescale_radius_mm,
+        return_debug=False,
+    )
+    _emit_json({"AoA_vertical_deg": result.vertical_deg, "AoA_horizontal_deg": result.horizontal_deg})
 
-    src = (source or "navigation").strip().lower()
-    ds = load_dataset(file, source=src, alias_points=True)
-    _label_grid(ds)
 
-    A = _resolve_one(ds, a)
-    B = _resolve_one(ds, b)
-    C = _resolve_one(ds, c)
-
-    res = AOE(data=ds, A=A, B=B, C=C, return_debug=False)
-    print({"AoE_deg": res.aoe_deg})
-
-
-@app.command("distance-3d")
-def distance_3d(
-    file: str = typer.Option(None, "--file", help="Annotation file path"),
-    source: str = typer.Option(None, "--source", help="navigation|photogrammetry|scanner"),
-    a: str = typer.Option(..., "--A", help="Point A name/label"),
-    b: str = typer.Option(..., "--B", help="Point B name/label"),
+@metric_app.command("sf")
+def metric_sf(
+    file: str = typer.Argument(...),
+    cranial: str = typer.Option(..., "--cranial"),
+    caudal: str = typer.Option(..., "--caudal"),
+    medial: str = typer.Option(..., "--medial"),
+    lateral: str = typer.Option(..., "--lateral"),
+    pivot: str = typer.Option(..., "--pivot"),
+    sf_rescale_radius_mm: Optional[float] = typer.Option(None, "--sf-rescale-radius-mm"),
+    source: str = typer.Option("", "--source"),
+    kind: str = typer.Option("auto", "--kind"),
+    navigation_format: str = typer.Option("auto", "--navigation-format"),
 ):
-    """Compute 3D linear distance between points A and B (mm). Opens labeling grid."""
-    if file is None:
-        raise typer.BadParameter("--file is required for this command (use `launch` for manual mode).")
+    dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
+    result = SF(
+        data=dataset,
+        entry=[
+            _resolve_name(dataset, cranial),
+            _resolve_name(dataset, caudal),
+            _resolve_name(dataset, medial),
+            _resolve_name(dataset, lateral),
+        ],
+        target=_resolve_name(dataset, pivot),
+        sf_rescale_radius_mm=sf_rescale_radius_mm,
+        return_debug=False,
+    )
+    _emit_json({"SF_area_mm2": result.area_mm2, "SF_area_standardized_mm2": result.standardized_area_mm2})
 
-    src = (source or "navigation").strip().lower()
-    ds = load_dataset(file, source=src, alias_points=True)
-    _label_grid(ds)
 
-    A = _resolve_one(ds, a)
-    B = _resolve_one(ds, b)
-
-    res = DISTANCE_3D(data=ds, A=A, B=B, return_debug=False)
-    print({"distance_mm": res.distance_mm})
-
-
-@app.command("area-3d")
-def area_3d(
-    file: str = typer.Option(None, "--file", help="Annotation file path"),
-    source: str = typer.Option(None, "--source", help="navigation|photogrammetry|scanner"),
-    polygon: str = typer.Option(..., "--polygon", help="Comma-separated polygon point names/labels (>=3)"),
+@metric_app.command("aoe")
+def metric_aoe(
+    file: str = typer.Argument(...),
+    a: str = typer.Option(..., "--A"),
+    b: str = typer.Option(..., "--B"),
+    c: str = typer.Option(..., "--C"),
+    source: str = typer.Option("", "--source"),
+    kind: str = typer.Option("auto", "--kind"),
+    navigation_format: str = typer.Option("auto", "--navigation-format"),
 ):
-    """Compute 3D polygon area (mm^2) from >=3 points. Opens labeling grid."""
-    if file is None:
-        raise typer.BadParameter("--file is required for this command (use `launch` for manual mode).")
-
-    src = (source or "navigation").strip().lower()
-    ds = load_dataset(file, source=src, alias_points=True)
-    _label_grid(ds)
-
-    poly_names = _resolve_list(ds, _split_csv(polygon))
-
-    res = AREA_3D(data=ds, polygon=poly_names, return_debug=False)
-    print({"area_mm2": res.area_mm2})
+    dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
+    result = AOE(
+        data=dataset,
+        A=_resolve_name(dataset, a),
+        B=_resolve_name(dataset, b),
+        C=_resolve_name(dataset, c),
+        return_debug=False,
+    )
+    _emit_json({"AoE_deg": result.aoe_deg})
 
 
-@app.command("volume-3d")
-def volume_3d(
-    file: str = typer.Option(None, "--file", help="Annotation file path"),
-    source: str = typer.Option(None, "--source", help="navigation|photogrammetry|scanner"),
-    points: str = typer.Option(..., "--points", help="Comma-separated point names/labels (>=4)"),
+@metric_app.command("distance")
+def metric_distance(
+    file: str = typer.Argument(...),
+    a: str = typer.Option(..., "--A"),
+    b: str = typer.Option(..., "--B"),
+    source: str = typer.Option("", "--source"),
+    kind: str = typer.Option("auto", "--kind"),
+    navigation_format: str = typer.Option("auto", "--navigation-format"),
 ):
-    """Estimate closed-solid volume (mm^3) from sparse 3D boundary points. Opens labeling grid."""
-    if file is None:
-        raise typer.BadParameter("--file is required for this command (use `launch` for manual mode).")
-
-    src = (source or "navigation").strip().lower()
-    ds = load_dataset(file, source=src, alias_points=True)
-    _label_grid(ds)
-
-    point_names = _resolve_list(ds, _split_csv(points))
-    res = VOLUME_3D(data=ds, points=point_names, return_debug=False)
-    print({"volume_mm3": res.volume_mm3})
+    dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
+    result = DISTANCE_3D(data=dataset, A=_resolve_name(dataset, a), B=_resolve_name(dataset, b), return_debug=False)
+    _emit_json({"distance_mm": result.distance_mm})
 
 
-def main():
+@metric_app.command("area")
+def metric_area(
+    file: str = typer.Argument(...),
+    polygon: str = typer.Option(..., "--polygon"),
+    source: str = typer.Option("", "--source"),
+    kind: str = typer.Option("auto", "--kind"),
+    navigation_format: str = typer.Option("auto", "--navigation-format"),
+):
+    dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
+    result = AREA_3D(data=dataset, polygon=_resolve_names(dataset, _split_csv(polygon)), return_debug=False)
+    _emit_json({"area_mm2": result.area_mm2})
+
+
+@metric_app.command("volume")
+def metric_volume(
+    file: str = typer.Argument(...),
+    points: str = typer.Option(..., "--points"),
+    source: str = typer.Option("", "--source"),
+    kind: str = typer.Option("auto", "--kind"),
+    navigation_format: str = typer.Option("auto", "--navigation-format"),
+):
+    dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
+    result = VOLUME_3D(data=dataset, points=_resolve_names(dataset, _split_csv(points)), return_debug=False)
+    _emit_json({"volume_mm3": result.volume_mm3})
+
+
+@app.command("launch", hidden=True)
+def launch():
+    """Deprecated interactive launcher retained for backward compatibility."""
+    raise typer.BadParameter(
+        "The interactive CLI launcher has been retired for research scripting. "
+        "Use `surgiplot dataset ...`, `surgiplot metric ...`, or `surgiplot_gui`."
+    )
+
+
+def main() -> None:
     app()
+
+
+if __name__ == "__main__":
+    main()

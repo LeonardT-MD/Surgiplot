@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, Any, List, Union
+from typing import Dict, Iterable, Any, List, Union, Sequence
 import re
 import numpy as np
 
@@ -74,6 +74,85 @@ class Dataset:
         # store preferred label separately to avoid polluting alias logic:
         self.meta.setdefault("preferred_labels", {})
         self.meta["preferred_labels"][target] = label
+
+    def labels_for_point(self, name: str) -> List[str]:
+        canonical = self.resolve_name(name)
+        labels: List[str] = []
+        for alias, target in self.aliases.items():
+            if alias == target or alias in self.points:
+                continue
+            if target == canonical:
+                labels.append(alias)
+        preferred = self.meta.get("preferred_labels", {}).get(canonical)
+        if preferred and preferred not in labels:
+            labels.insert(0, str(preferred))
+        return sorted(dict.fromkeys(labels), key=str.lower)
+
+    def preferred_label(self, name: str) -> str:
+        canonical = self.resolve_name(name)
+        preferred = self.meta.get("preferred_labels", {}).get(canonical)
+        if isinstance(preferred, str) and preferred.strip():
+            return preferred.strip()
+        labels = self.labels_for_point(canonical)
+        return labels[0] if labels else canonical
+
+    def set_labels(
+        self,
+        name: str,
+        labels: Sequence[str],
+        overwrite: bool = True,
+    ) -> None:
+        canonical = self.resolve_name(name)
+        normalized = [str(label).strip() for label in labels if str(label).strip()]
+        unique_labels = [label for label in dict.fromkeys(normalized) if label != canonical]
+
+        if overwrite:
+            self.aliases = {
+                alias: target
+                for alias, target in self.aliases.items()
+                if not (target == canonical and alias != target and alias not in self.points)
+            }
+            preferred_labels = self.meta.get("preferred_labels", {})
+            if canonical in preferred_labels:
+                preferred_labels.pop(canonical, None)
+
+        for idx, label in enumerate(unique_labels):
+            self.add_alias(label, canonical, overwrite=overwrite)
+            if idx == 0:
+                self.meta.setdefault("preferred_labels", {})
+                self.meta["preferred_labels"][canonical] = label
+
+    def rename_point(self, name: str, new_name: str, overwrite: bool = False) -> str:
+        canonical = self.resolve_name(name)
+        target = str(new_name).strip()
+        if not target:
+            raise ValueError("New point name cannot be empty.")
+        if target == canonical:
+            return canonical
+        if target in self.points and not overwrite:
+            raise KeyError(f"Point '{target}' already exists.")
+        if target in self.aliases and self.aliases.get(target) != canonical:
+            raise KeyError(f"Name '{target}' conflicts with an existing alias.")
+
+        point = self.points.pop(canonical)
+        self.points[target] = point
+
+        remapped_aliases: Dict[str, str] = {}
+        for alias, alias_target in self.aliases.items():
+            if alias == canonical:
+                continue
+            remapped_aliases[alias] = target if alias_target == canonical else alias_target
+        self.aliases = remapped_aliases
+
+        preferred = self.meta.get("preferred_labels", {}).pop(canonical, None)
+        if preferred:
+            self.meta.setdefault("preferred_labels", {})
+            self.meta["preferred_labels"][target] = preferred
+
+        original_labels = self.meta.get("original_labels")
+        if isinstance(original_labels, dict) and canonical in original_labels:
+            original_labels[target] = original_labels.pop(canonical)
+        return target
 
     # ----------------------------
     # Name resolution

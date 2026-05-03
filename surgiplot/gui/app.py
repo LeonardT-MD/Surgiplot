@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 import json
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -206,7 +207,7 @@ class PlotPanel(QtWidgets.QWidget):
         self._selected_point = None
         self._projection = "3d"
         self._layer_list_syncing = False
-        self._model_opacity = 0.45
+        self._model_opacity = 0.98
         self._model_show_edges = False
         self._model_point_size = 4.0
         self._model_use_source_colors = True
@@ -533,6 +534,69 @@ class PlotPanel(QtWidgets.QWidget):
                 return self.pv_plotter.add_mesh(surf, scalars="rgb", rgb=True, **kwargs)
         return self.pv_plotter.add_mesh(surf, color=color or "#94a3b8", **kwargs)
 
+    def _pv_textured_surface(self, payload: dict, opacity: float = 1.0, name: Optional[str] = None, pickable: bool = False):
+        if self.pv_plotter is None or pv is None or not isinstance(payload, dict):
+            return None
+        verts = np.asarray(payload.get("vertices", []), dtype=float)
+        faces_idx = np.asarray(payload.get("faces", []), dtype=np.int64)
+        uv = np.asarray(payload.get("uv", []), dtype=float)
+        texture_path = str(payload.get("texture_path", "") or "").strip()
+        if (
+            verts.ndim != 2
+            or verts.shape[1] != 3
+            or faces_idx.ndim != 2
+            or faces_idx.shape[1] != 3
+            or uv.ndim != 2
+            or uv.shape[1] != 2
+            or len(verts) == 0
+            or len(uv) != len(verts)
+            or len(faces_idx) == 0
+            or not texture_path
+            or not os.path.exists(texture_path)
+        ):
+            return None
+        faces = np.hstack(
+            [np.full((len(faces_idx), 1), 3, dtype=np.int64), faces_idx.astype(np.int64)]
+        ).reshape(-1)
+        surf = pv.PolyData(verts, faces)
+        try:
+            surf.active_texture_coordinates = uv.astype(np.float32, copy=False)
+        except Exception:
+            try:
+                surf.point_data["Texture Coordinates"] = uv.astype(np.float32, copy=False)
+            except Exception:
+                pass
+        try:
+            surf = surf.compute_normals(
+                cell_normals=False,
+                point_normals=True,
+                split_vertices=False,
+                consistent_normals=True,
+                auto_orient_normals=False,
+                non_manifold_traversal=True,
+                inplace=False,
+            )
+        except Exception:
+            pass
+        try:
+            texture = pv.read_texture(texture_path)
+        except Exception:
+            return None
+        return self.pv_plotter.add_mesh(
+            surf,
+            texture=texture,
+            opacity=opacity,
+            show_edges=False,
+            smooth_shading=True,
+            ambient=0.24,
+            diffuse=0.86,
+            specular=0.02,
+            specular_power=8,
+            name=name,
+            reset_camera=False,
+            pickable=pickable,
+        )
+
     def _pv_polygon_surface(self, polygon: np.ndarray, color: str, opacity: float, name: Optional[str] = None, pickable: bool = False):
         poly = np.asarray(polygon, dtype=float)
         if poly.ndim != 2 or poly.shape[1] != 3 or len(poly) < 3:
@@ -851,7 +915,7 @@ class PlotPanel(QtWidgets.QWidget):
                 self._pv_pick_actor = self._pv_points(
                     coords,
                     color="#111827",
-                    size=max(18.0, self._model_point_size + 10.0),
+                    size=self._metric_size(14.0),
                     opacity=0.001,
                     name="interactive_pick_points",
                     pickable=True,
@@ -872,7 +936,7 @@ class PlotPanel(QtWidgets.QWidget):
         self._pv_selection_actor = self._pv_points(
             xyz.reshape(1, 3),
             color="#0f172a",
-            size=max(18.0, self._model_point_size + 10.0),
+            size=self._metric_size(16.0),
             opacity=1.0,
             name="selected_metric_point",
             pickable=False,
@@ -944,7 +1008,7 @@ class PlotPanel(QtWidgets.QWidget):
             xyz[:, 0],
             xyz[:, 1],
             xyz[:, 2],
-            s=58,
+            s=self._metric_size(14.0) ** 2 * 0.28,
             c="#2f6fed",
             alpha=0.92,
             edgecolors="white",
@@ -969,6 +1033,11 @@ class PlotPanel(QtWidgets.QWidget):
         xyz = np.asarray(ai_scene.get("cloud_xyz", []), dtype=float)
         if xyz.ndim == 2 and xyz.shape[1] == 3 and len(xyz) > 0:
             arrays.append(xyz)
+        texture_payload = ai_scene.get("surface_texture_payload")
+        if isinstance(texture_payload, dict):
+            texture_verts = np.asarray(texture_payload.get("vertices", []), dtype=float)
+            if texture_verts.ndim == 2 and texture_verts.shape[1] == 3 and len(texture_verts) > 0:
+                arrays.append(texture_verts)
         tris = np.asarray(ai_scene.get("surface_triangles", []), dtype=float)
         if tris.ndim == 3 and tris.shape[-1] == 3 and len(tris) > 0:
             arrays.append(tris.reshape(-1, 3))
@@ -982,11 +1051,43 @@ class PlotPanel(QtWidgets.QWidget):
         cloud_rgb = np.asarray(ai_scene.get("cloud_rgb", []), dtype=float)
         surface_triangles = np.asarray(ai_scene.get("surface_triangles", []), dtype=float)
         surface_rgb = np.asarray(ai_scene.get("surface_rgb", []), dtype=float)
+        surface_texture_payload = ai_scene.get("surface_texture_payload")
+        has_cloud = cloud_xyz.ndim == 2 and cloud_xyz.shape[1] == 3 and len(cloud_xyz) > 0
         has_surface = surface_triangles.ndim == 3 and surface_triangles.shape[1:] == (3, 3) and len(surface_triangles) > 0
-        show_surface = has_surface
-        show_points = not has_surface
+        has_textured_surface = isinstance(surface_texture_payload, dict)
+        show_points = has_cloud
+        show_surface = has_surface or has_textured_surface
         if self._viewer_mode == "pyvista" and self.pv_plotter is not None:
-            if has_surface:
+            background_actors: List[Any] = []
+            if has_textured_surface:
+                surface_actor = self._pv_textured_surface(
+                    surface_texture_payload,
+                    opacity=self._model_opacity,
+                    name="Imported scene",
+                )
+                if surface_actor is not None:
+                    background_actors.append(surface_actor)
+                elif has_surface:
+                    if (
+                        not self._model_use_source_colors
+                        or surface_rgb.ndim != 2
+                        or surface_rgb.shape[0] != len(surface_triangles)
+                        or surface_rgb.shape[1] != 3
+                    ):
+                        surface_rgb = None
+                    surface_actor = self._pv_surface(
+                        surface_triangles,
+                        color="#94a3b8",
+                        rgb=surface_rgb,
+                        opacity=self._model_opacity,
+                        show_edges=self._model_show_edges,
+                        edge_color="#64748b",
+                        line_width=0.2,
+                        name="Imported scene",
+                    )
+                    if surface_actor is not None:
+                        background_actors.append(surface_actor)
+            elif has_surface:
                 if (
                     not self._model_use_source_colors
                     or surface_rgb.ndim != 2
@@ -1002,10 +1103,11 @@ class PlotPanel(QtWidgets.QWidget):
                     show_edges=self._model_show_edges,
                     edge_color="#64748b",
                     line_width=0.2,
-                    name="Rendered surface",
+                    name="Imported scene",
                 )
-                self._register_layer("Rendered surface", surface_actor, visible=show_surface)
-            elif cloud_xyz.ndim == 2 and cloud_xyz.shape[1] == 3 and len(cloud_xyz) > 0:
+                if surface_actor is not None:
+                    background_actors.append(surface_actor)
+            if has_cloud:
                 if (
                     not self._model_use_source_colors
                     or cloud_rgb.ndim != 2
@@ -1018,10 +1120,13 @@ class PlotPanel(QtWidgets.QWidget):
                     rgb=cloud_rgb,
                     color="#94a3b8",
                     size=self._model_point_size,
-                    opacity=min(self._model_opacity + 0.10, 1.0),
-                    name="Rendered imaging",
+                    opacity=1.0,
+                    name="Imported scene",
                 )
-                self._register_layer("Rendered imaging", cloud_actor, visible=show_points)
+                if cloud_actor is not None:
+                    background_actors.append(cloud_actor)
+            if background_actors:
+                self._register_layer("Imported scene", background_actors, visible=True)
             calibration = str(ai_scene.get("calibration", "") or "")
             if calibration:
                 self._status.setText(f"3D scene calibration: {calibration}.")
@@ -1029,7 +1134,7 @@ class PlotPanel(QtWidgets.QWidget):
 
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-        if surface_triangles.ndim == 3 and surface_triangles.shape[1:] == (3, 3) and len(surface_triangles) > 0:
+        if has_surface:
             if (
                 not self._model_use_source_colors
                 or surface_rgb.ndim != 2
@@ -1048,8 +1153,12 @@ class PlotPanel(QtWidgets.QWidget):
                     alpha=self._model_opacity,
                 )
             )
-            self._register_layer("Rendered surface", surface_artist, visible=show_surface)
-        if cloud_xyz.ndim != 2 or cloud_xyz.shape[1] != 3 or len(cloud_xyz) == 0:
+            background_artists: List[Any] = [surface_artist]
+        else:
+            background_artists = []
+        if not has_cloud:
+            if background_artists:
+                self._register_layer("Imported scene", background_artists, visible=True)
             return
         if cloud_rgb.ndim != 2 or cloud_rgb.shape[0] != len(cloud_xyz) or cloud_rgb.shape[1] != 3:
             cloud_rgb = None
@@ -1061,11 +1170,12 @@ class PlotPanel(QtWidgets.QWidget):
             cloud_xyz[:, 2],
             s=self._model_point_size,
             c=cloud_rgb if cloud_rgb is not None else "#94a3b8",
-            alpha=min(self._model_opacity + 0.10, 1.0),
+            alpha=1.0,
             linewidths=0.0,
             depthshade=True,
         )
-        self._register_layer("Rendered imaging", cloud_artist, visible=show_points)
+        background_artists.append(cloud_artist)
+        self._register_layer("Imported scene", background_artists, visible=True)
         calibration = str(ai_scene.get("calibration", "") or "")
         if calibration:
             self._status.setText(

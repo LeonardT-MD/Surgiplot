@@ -8,434 +8,388 @@
 
 # Surgiplot
 
-Surgiplot is a local software environment for quantitative neuroanatomical and skull base analysis. It was developed to support reproducible geometric study of operative corridors, approach angles, exposure metrics, landmark-defined surfaces, and point-derived volumetric constructs from three-dimensional anatomical data.
+Surgiplot is a local scientific software environment for quantitative neuroanatomical and skull-base analysis. It provides:
 
-The software is intended for workflows in which the primary observations are represented by 3D coordinates, whether derived from neuronavigation, structured tabular annotation, manual landmark selection, or an imported three-dimensional scene. These coordinates are subsequently used to construct explicit geometric models from which quantitative operative descriptors can be derived, visualized, and audited.
+1. a desktop GUI for dataset curation, imported 3D scene landmark acquisition, and interactive visualization
+2. a Python library and CLI for reproducible scripting, batch studies, and research pipelines
 
-Surgiplot currently supports the following metrics:
+Its core design principle is simple: once landmarks are represented as explicit 3D coordinates in a common frame, operative metrics should be computed from inspectable geometric constructs rather than opaque software state.
 
-- **VoA**: Visuooperative Angle
-- **VOM**: Volume of Operative Maneuverability
-- **sVOM**: standardized VOM
-- **AoA**: Angle of Attack
-- **SF**: Surgical Freedom
-- **AoE**: Angle of Exposure
-- **AE**: Area of Exposure
-- **3D Distance**
-- **Volume** from sparse 3D boundary points
+## Scope
 
-Surgiplot can be used either as:
+Surgiplot currently supports:
 
-1. a **desktop GUI** for dataset curation, three-dimensional scene exploration, landmark acquisition, and interactive visualization
-2. a **local Python toolkit / CLI** for scripted analysis, reproducibility studies, and methodological audit
+- `VoA` — Visuo-operative Angle
+- `VOM` — Volume of Operative Maneuverability
+- `sVOM` — standardized VOM
+- `AoA` — Angle of Attack
+- `SF` — Surgical Freedom
+- `AoE` — Angle of Exposure
+- `3D Distance`
+- `3D Area`
+- `3D Volume`
 
-## Overview
-
-Quantitative anatomical analysis in neurosurgical research frequently relies on ad hoc spreadsheets, case-specific notebooks, or proprietary navigation exports that are difficult to harmonize across investigators, laboratories, and publications. Surgiplot was conceived to provide a unified computational framework in which:
-
-- anatomically meaningful landmarks are stored in a common data structure
-- geometric constructs are explicitly defined rather than implicitly assumed
-- intermediate computational objects remain inspectable
-- the same metric logic can be applied across heterogeneous acquisition sources
-
-The central premise of the software is that, once a set of reliable 3D landmarks has been defined in a shared coordinate frame, multiple measurements of operative access, exposure, directionality, and spatial extent can be derived from the same annotated dataset in a reproducible manner.
-
-## Core data model
-
-Irrespective of acquisition source, Surgiplot normalizes imported or collected coordinates into a shared editable dataset. Each dataset is composed of:
-
-- canonical coordinate identifiers such as `point_1`, `point_2`, ...
-- an editable label field for semantic aliases such as `apc`, `cranial`, `medial`, or other anatomy-specific terms
-
-Metric definitions may therefore refer to:
-
-- canonical point identifiers
-- semantic aliases
-- compact numeric shorthand where appropriate in the GUI
-
-Examples:
-
-```python
-entry = ["point_1", "point_2", "point_3", "point_4"]
-```
-
-```python
-entry = ["clinoid_A", "clinoid_B", "clinoid_C", "clinoid_D"]
-```
-
-```text
-1-4
-```
-
-In the GUI, numeric shorthand such as `1-5` is expanded to `1, 2, 3, 4, 5` in multi-point fields.
-
-## Supported data sources
-
-Surgiplot is designed to operate locally on heterogeneous sources of 3D anatomical information, including:
+The same metric logic can be applied to landmarks originating from:
 
 - neuronavigation exports
-- structured point tables (`CSV`, `TSV`, `XLSX`)
-- manually entered coordinates
-- external 3D meshes or point clouds imported into the 3D Scene Workspace
-
-All imported or collected coordinates are ultimately mapped into the same dataset abstraction. Accordingly, downstream metric computation is independent of whether the landmark set originated from a navigation system, a curated spreadsheet, or a mesh-based three-dimensional scene.
-
-## Principal workflows
-
-### 1. Navigation or tabular annotation workflow
-
-1. Import a navigation export or point table
-2. Inspect and curate the dataset
-3. Edit labels or add supplementary points
-4. Proceed to analysis
-5. Compute one or more quantitative metrics
-6. Visualize the resulting geometry in 3D
-
-### 2. Three-dimensional scene workflow
-
-1. Import a mesh or point cloud into the **3D Scene Workspace**
-2. Visually inspect the anatomy in the three-dimensional viewer
-3. Rescale the scene by selecting two points and entering the known real-world distance
-4. Collect landmarks directly on the scene
-5. Commit those landmarks into the Surgiplot dataset
-6. Move to the analysis workspace and compute the same metrics used for navigation-derived points
-
-This workflow is particularly relevant when a previously reconstructed anatomical model is to be treated as a landmark source for the same downstream measurements used in navigation-derived studies.
-
-## Metric definitions
-
-### VoA: Visuooperative Angle
-
-**Definition**
-
-VoA describes the alignment between the operative trajectory and the target construct. In the present implementation it is derived from the centroid-to-centroid trajectory between entry and target geometries relative to the target-plane normal.
-
-**Methodological rationale**
-
-A purely volumetric corridor description is incomplete if directional alignment is ignored. Two corridors may exhibit similar cross-sectional dimensions while differing substantially in their approach relationship to the target.
-
-**Typical applications**
-
-- comparison of approaches to a common target
-- quantification of corridor orientation
-- paired reporting with VOM and sVOM
-
-### VOM: Volume of Operative Maneuverability
-
-**Definition**
-
-VOM models the operative corridor volume between entry and target regions. In the current methodology, irregular entry and target polygons are:
-
-1. projected to PCA-derived best-fit planes
-2. converted into area-matched reference ellipses
-3. reconstructed in 3D
-4. lofted into a geometric corridor solid
-
-The primary output is the enclosed volume of the resulting three-dimensional corridor solid.
-
-**Methodological rationale**
-
-This yields a corridor-oriented volumetric descriptor that is more anatomically and procedurally meaningful than generic enclosing volumes or purely linear measurements.
-
-**Typical applications**
-
-- corridor comparison across approaches
-- target-specific access-volume analysis
-- methodological study of operative maneuverability
-
-### sVOM: standardized VOM
-
-**Definition**
-
-sVOM represents a standardized distal segment of the corridor rather than its full entry-to-target extent.
-
-**Methodological rationale**
-
-A standardized distal segment may provide a more robust substrate for cross-case comparison of near-target working space than a full-length corridor whose proximal extent varies by case definition or surgical approach.
-
-**Typical applications**
-
-- near-target corridor comparison
-- standard-distance methodological studies
-- analyses focused on distal rather than full-length corridor volume
-
-### AoA: Angle of Attack
-
-**Definition**
-
-AoA is computed in vertical and horizontal components:
-
-- **vertical AoA** from the cranial-caudal-pivot triangle
-- **horizontal AoA** from the medial-lateral-pivot triangle
-
-Optional standardization projects each entry point along its pivot-directed ray to a fixed distance before recalculation of standardized geometry.
-
-**Methodological rationale**
-
-Approach angles quantify directionality independently from pure area or volume. Vertical and horizontal decomposition improves anatomical and operative interpretability.
-
-**Typical applications**
-
-- comparison of working direction across approaches
-- quantification of access angle at a target
-- combined directional and areal corridor analysis
-
-### SF: Surgical Freedom
-
-**Definition**
-
-SF is represented as the quadrilateral surface defined by the ordered entry points:
-
-- cranial
-- lateral
-- caudal
-- medial
-
-The software also supports a standardized version obtained by projecting the entry points to a fixed pivot-centered distance.
-
-**Methodological rationale**
-
-SF provides a planarized summary of the proximal maneuvering envelope and complements the directional information given by the AoA triangles and the distal information captured by volumetric corridor metrics.
-
-**Typical applications**
-
-- comparison of entry working area
-- standardized access-window analysis
-- reporting of proximal maneuverability independently of corridor length
-
-### AoE: Angle of Exposure
-
-**Definition**
-
-AoE describes a three-point angular construct and is visualized in the GUI as a 360 degree circular plot with the measured angle highlighted.
-
-**Methodological rationale**
-
-This metric is useful when the relevant quantity is angular exposure about a pivot or viewpoint rather than three-dimensional corridor extent.
-
-**Typical applications**
-
-- angular target exposure analysis
-- comparison of visible or exposed sectors between approaches
-
-### AE: Area of Exposure
-
-**Definition**
-
-AE is computed from an ordered 3D polygon. The polygon is:
-
-1. projected onto a PCA-derived best-fit plane
-2. converted into 2D plane coordinates
-3. measured with the shoelace formula
-
-The GUI may also display the corresponding coplanar fitted surface reconstructed in native three-dimensional space.
-
-**Methodological rationale**
-
-Anatomical point sets are often nearly, but not perfectly, coplanar. PCA-based plane fitting provides a reproducible formalization of an idealized exposure surface.
-
-**Typical applications**
-
-- measurement of exposure windows from ordered landmarks
-- comparison of planarized surface extents
-- methodological studies of exposure area
-
-### 3D Distance
-
-**Definition**
-
-This metric computes Euclidean distance between two 3D landmarks.
-
-**Methodological rationale**
-
-Simple distances remain fundamental for anatomical description, validation, scaling checks, and target-entry separation.
-
-**Typical applications**
-
-- linear anatomical measurements
-- scale confirmation
-- target-entry separation
-
-### Volume
-
-**Definition**
-
-This metric estimates the volume of a closed solid reconstructed from a sparse boundary point cloud. The implementation attempts a local alpha-shape-like reconstruction and falls back to a convex hull only when necessary.
-
-**Methodological rationale**
-
-In some studies, the available observation is not a dense segmentation but a sparse set of perimeter or boundary samples. This metric provides a principled volumetric reconstruction from those sparse coordinates.
-
-**Typical applications**
-
-- point-based surrogate segmentation
-- cavity or compartment volume estimation from sparse samples
-- exploratory volumetric reconstruction in anatomical research
-
-## Methodological principles
-
-Surgiplot is organized around several methodological principles:
-
-- **shared coordinate frame first**: all metrics assume that the landmarks exist in a coherent 3D frame
-- **inspectable geometry**: intermediate constructs remain available for plotting and debugging
-- **explicit geometric models**: corridor and surface measurements are tied to defined geometric constructs rather than opaque black-box outputs
-- **local execution**: the software is designed to run on the user’s machine without requiring a cloud workflow
-
-Representative examples include:
-
-- `AE` is not computed as the area of a warped mesh, but as the area of an ordered polygon projected onto its PCA-derived best-fit plane
-- `VOM` is not inferred from a schematic graphic, but from an explicit lofted corridor model
-- `AoA / SF` standardization does not globally scale the case; rather, it projects each entry point along its pivot ray to a selected fixed distance
-
-## Three-dimensional visualization
-
-Surgiplot separates:
-
-- the **background anatomical scene** (imported mesh or point cloud)
-- the **metric geometry** (points, polygons, ellipses, corridor shells, triangles, surfaces, arrows)
-
-This distinction is useful in practice because investigators may need to:
-
-- reduce the visual dominance of the anatomical scene
-- disable source texture and inspect mesh shape alone
-- strengthen metric overlays for figure preparation or methodological review
-
-The analysis viewer therefore provides separate controls for:
-
-- **3D model rendering**
-  - opacity
-  - point size
-  - mesh edges
-  - source colors / texture on-off
-- **metric overlay rendering**
-  - opacity
-  - emphasis
-
-Metric scenes are rendered directly within the same three-dimensional coordinate system as the imported anatomy, so the overlay remains geometrically concordant with the underlying model rather than purely illustrative.
+- normalized tabular datasets
+- generic 3D point files
+- manually assembled point sets
+- imported 3D scenes curated through the GUI
 
 ## Installation
 
-### Recommended local setup
-
-Surgiplot is intended for local execution. A conda or Miniforge environment is recommended for a stable scientific Python stack.
+### Core package
 
 ```bash
-git clone https://github.com/LeonardT-MD/Surgiplot.git
-cd Surgiplot
-
-conda create -n surgiplot python=3.11 pip -y
-conda activate surgiplot
-
 pip install -e .
 ```
 
-### Optional GPU-backed 3D scene backend
-
-For improved mesh and point-cloud visualization, including PyVista-based three-dimensional analysis scenes:
+### With 3D scene rendering support
 
 ```bash
-pip install -e ".[scene3d]"
+pip install -e .[scene3d]
 ```
 
-This installs:
-
-- `pyvista`
-- `pyvistaqt`
-- `vtk`
-
-If `.[scene3d]` is not installed, Surgiplot falls back to the Matplotlib-based viewer where applicable.
-
-### Local installer script
+### Main entry points
 
 ```bash
-bash surgiplot/scripts/install_conda.sh
+surgiplot
+surgiplot version
+surgiplot_gui
 ```
 
-## Running Surgiplot
+## Conceptual model
 
-### GUI mode
+Surgiplot uses a single editable `Dataset` object as its canonical data container.
+
+Each dataset stores:
+
+- canonical point identifiers such as `point_1`, `point_2`, ...
+- optional semantic labels or aliases such as `apex`, `cranial`, `pivot`, `medial`
+- metadata such as acquisition source, vendor, and coordinate system
+
+This allows the same metric function to be called using either canonical point names or human-readable labels.
+
+## Python library
+
+### Minimal example
+
+```python
+import surgiplot as sp
+
+ds = sp.load("annotations.csv", source="database")
+
+result = sp.DISTANCE_3D(data=ds, A="point_1", B="point_2")
+print(result.distance_mm)
+```
+
+### Manual dataset construction
+
+```python
+import surgiplot as sp
+
+ds = sp.from_points(
+    points=[
+        [0.0, 0.0, 0.0],
+        [10.0, 0.0, 0.0],
+        [0.0, 10.0, 0.0],
+        [0.0, 0.0, 10.0],
+    ],
+    names=["cranial", "caudal", "medial", "pivot"],
+    source="research",
+)
+```
+
+### Relabeling and canonical point management
+
+```python
+import surgiplot as sp
+
+ds = sp.load("navigation_export.txt", source="navigation")
+
+sp.apply_labels(
+    ds,
+    {
+        "point_1": ["cranial"],
+        "point_2": ["caudal"],
+        "point_3": ["medial"],
+        "point_4": ["lateral"],
+        "point_5": ["pivot"],
+    },
+)
+
+sp.rename_points(ds, {"point_120": "entry_anchor"})
+```
+
+### Research-facing convenience API
+
+The full metric kernels remain available:
+
+```python
+sp.VOM_VOA(...)
+sp.AOA_SF(...)
+sp.AOE(...)
+sp.DISTANCE_3D(...)
+sp.AREA_3D(...)
+sp.VOLUME_3D(...)
+```
+
+For script ergonomics, Surgiplot also exposes convenience wrappers:
+
+```python
+sp.VOM(...)
+sp.VOA(...)
+sp.SVOM(...)
+sp.AOA(...)
+sp.SF(...)
+```
+
+These wrappers do not change the underlying computation. They simply extract the relevant quantity from the established result objects.
+
+### Example: VOM / VoA workflow
+
+```python
+import surgiplot as sp
+
+ds = sp.load("case_07.csv", source="database")
+
+result = sp.VOM_VOA(
+    data=ds,
+    entry=["entry_a", "entry_b", "entry_c", "entry_d"],
+    target=["target_a", "target_b", "target_c", "target_d"],
+    stand_dist=10.0,
+    return_debug=True,
+)
+
+print(result.voa_deg)
+print(result.vom_mm3)
+print(result.svom_mm3)
+```
+
+### Example: AoA / SF workflow
+
+```python
+import surgiplot as sp
+
+ds = sp.load("case_07.csv", source="database")
+
+result = sp.AOA_SF(
+    data=ds,
+    entry=["cranial", "caudal", "medial", "lateral"],
+    target="pivot",
+    sf_rescale_radius_mm=10.0,
+    return_debug=True,
+)
+
+print(result.aoa_vertical_deg)
+print(result.aoa_horizontal_deg)
+print(result.sf_entry_area_mm2)
+print(result.sf_entry_area_rescaled_mm2)
+```
+
+## CLI guide
+
+The CLI is designed for stateless research workflows: load a dataset or annotation file, optionally normalize/relabel it, and emit structured results.
+
+## CLI overview
+
+```bash
+surgiplot version
+surgiplot dataset summary FILE
+surgiplot dataset labels FILE [--label ...] [--rename ...] [--out ...]
+surgiplot dataset export FILE OUT
+surgiplot metric vom-voa ...
+surgiplot metric vom ...
+surgiplot metric voa ...
+surgiplot metric svom ...
+surgiplot metric aoa-sf ...
+surgiplot metric aoa ...
+surgiplot metric sf ...
+surgiplot metric aoe ...
+surgiplot metric distance ...
+surgiplot metric area ...
+surgiplot metric volume ...
+```
+
+### Dataset inspection
+
+```bash
+surgiplot dataset summary case_01.csv --source database
+```
+
+### Relabeling for downstream scripts
+
+```bash
+surgiplot dataset labels case_01.csv \
+  --label point_1=cranial \
+  --label point_2=caudal \
+  --label point_3=medial \
+  --label point_4=lateral \
+  --label point_5=pivot \
+  --out case_01_labeled.json
+```
+
+### Renaming canonical points
+
+```bash
+surgiplot dataset labels case_01.csv \
+  --rename point_120=entry_anchor \
+  --rename point_121=target_anchor \
+  --out case_01_renamed.json
+```
+
+### Export to normalized JSON
+
+```bash
+surgiplot dataset export raw_navigation.txt normalized_case.json --source navigation
+```
+
+### VOM / VoA from the terminal
+
+```bash
+surgiplot metric vom-voa case_01_labeled.json \
+  --entry cranial,caudal,medial,lateral \
+  --target target_a,target_b,target_c,target_d \
+  --stand-dist 10.0
+```
+
+### AoA only
+
+```bash
+surgiplot metric aoa case_01_labeled.json \
+  --cranial cranial \
+  --caudal caudal \
+  --medial medial \
+  --lateral lateral \
+  --pivot pivot \
+  --sf-rescale-radius-mm 10.0
+```
+
+### SF only
+
+```bash
+surgiplot metric sf case_01_labeled.json \
+  --cranial cranial \
+  --caudal caudal \
+  --medial medial \
+  --lateral lateral \
+  --pivot pivot
+```
+
+### Area, distance, and volume
+
+```bash
+surgiplot metric distance case_01_labeled.json --A point_1 --B point_2
+surgiplot metric area case_01_labeled.json --polygon point_1,point_2,point_3,point_4
+surgiplot metric volume case_01_labeled.json --points point_1,point_2,point_3,point_4,point_5,point_6
+```
+
+CLI outputs are emitted as structured JSON-like text, making them easy to capture in shell pipelines, notebooks, Snakemake rules, or institutional batch-processing environments.
+
+## Supported inputs
+
+### Navigation imports
+
+- Stryker annotation exports
+- Medtronic JSON annotation exports
+- generic navigation-like point lists
+
+### Tabular / normalized inputs
+
+- `.csv`
+- `.tsv`
+- `.xlsx`
+- `.xls`
+
+Required normalized columns:
+
+- `name`
+- `x`
+- `y`
+- `z`
+
+### Generic point text
+
+Accepted line formats include:
+
+```text
+point_1, 1.0, 2.0, 3.0
+point_2 4.0 5.0 6.0
+point_3\t7.0\t8.0\t9.0
+```
+
+## GUI workflow
+
+The GUI remains the preferred environment for:
+
+- point curation and label editing
+- imported 3D scene scaling
+- direct point collection on an anatomical scene
+- interactive geometric inspection of metric constructs
+
+Launch with:
 
 ```bash
 surgiplot_gui
 ```
 
-The graphical interface supports:
+## Package layout
 
-- dataset import and curation
-- direct label editing
-- 3D scene import
-- local scene rescaling from two selected 3D points
-- landmark collection into the shared dataset
-- metric configuration and analysis
-- 3D overlay plotting
-- result inspection and debug review
-
-### CLI / library mode
-
-```bash
-surgiplot
+```text
+surgiplot/
+  core/
+    dataset.py
+    io/
+    geometry/
+    transforms/
+  metrics/
+    aoa_sf.py
+    aoe.py
+    vom_voa.py
+    distance_3d.py
+    area_3d.py
+    volume_3d.py
+  cli/
+    app.py
+  gui/
+    app.py
+  ai/
+    scene_reconstruction.py
+    scene_picker.py
 ```
 
-Surgiplot may also be used from scripts or notebooks when explicit control of data loading, metric definition, and downstream reproducibility is preferred.
+## Reproducibility notes
 
-## Representative use cases
+For research use, the recommended pattern is:
 
-### Navigation-derived operative corridor study
+1. preserve the original export file
+2. normalize to a Surgiplot dataset
+3. record label mappings explicitly
+4. run metrics from a script or CLI command
+5. save metric outputs together with dataset version and package version
 
-Landmarks are exported from a neuronavigation platform, assigned anatomical aliases, and used to compute AoA, SF, VoA, VOM, and sVOM for comparative analysis across approaches or specimens.
+You can retrieve the installed package version with:
 
-### Mesh-based anatomical landmark collection
+```bash
+surgiplot version
+```
 
-An external anatomical mesh is imported, rescaled from a known reference distance, annotated directly in three-dimensional space, and analyzed using the same metric framework employed for navigation-derived coordinates.
+or in Python:
 
-### Point-based boundary reconstruction
+```python
+import surgiplot as sp
+print(sp.__version__)
+```
 
-A sparse set of boundary points is sampled around an anatomical compartment and used to estimate an enclosed volume from an inferred surface reconstruction.
+## Current design boundaries
 
-### Reproducible methods development
+Surgiplot is intentionally oriented around explicit coordinate-based geometry. It is not a general-purpose mesh editing system, and it does not attempt to replace specialized surgical planning or scientific visualization platforms.
 
-A landmarking scheme is developed in the GUI, exported as a curated dataset, and then re-executed through scripted analysis for validation, methods development, or manuscript preparation.
+For large-scale interactive 3D scene handling, the GUI is best regarded as a landmark acquisition and metric-integration environment rather than a full native mesh workstation.
 
-## Reproducibility and auditability
+## Citation-style description
 
-Surgiplot is intended to facilitate inspection, re-execution, and methodological audit of quantitative workflows. The platform supports:
+If you need a concise methodological description for internal notes or manuscript methods sections:
 
-- explicit named landmarks
-- editable labels and aliases
-- debug payloads containing intermediate geometric data
-- 3D visualization of the measured constructs
-- export of datasets and result payloads
-
-The purpose is not only to generate a numerical output, but also to preserve the geometric pathway by which that output was obtained.
-
-## Scope and limitations
-
-Surgiplot is intended for quantitative geometric analysis. It is not a diagnostic system and should not be interpreted as a substitute for clinical judgment.
-
-Important practical limitations include:
-
-- results depend on the quality and consistency of the selected landmarks
-- polygon-based metrics depend on meaningful point ordering
-- point-derived volume reconstruction remains a model of a likely solid rather than a true image segmentation
-- imported meshes and point clouds are only as metrically valid as their own reconstruction pipeline and scaling
-
-These limitations are inherent to landmark-based anatomical measurement and should be explicitly acknowledged in study design, interpretation, and reporting.
-
-## Repository purpose
-
-This repository serves as the software release and methodological implementation site for Surgiplot. Its purpose is to provide:
-
-- a reference implementation of the operative metrics supported by the platform
-- an inspectable local toolchain for three-dimensional anatomical measurement
-- a shared computational environment for navigation-derived and mesh-derived quantitative workflows
-
-## License
-
-This repository currently does **not** include a final `LICENSE` file. The intended open-source license should be added before formal public distribution or reuse terms are asserted.
-
-## Citation
-
-If Surgiplot is used in academic work, cite both:
-
-- the Surgiplot repository
-- the associated methodological publications for the operative metrics when available or formally linked
+> Surgiplot is a local coordinate-based analysis environment for neurosurgical anatomical research. It normalizes heterogeneous 3D landmark sources into a common dataset abstraction and computes explicit geometric metrics including AoA, SF, VoA, VOM, sVOM, AoE, linear distance, polygonal area, and sparse point-derived volume.

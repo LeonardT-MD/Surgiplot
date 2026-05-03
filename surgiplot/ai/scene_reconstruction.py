@@ -28,6 +28,28 @@ from PySide6 import QtCore, QtWidgets
 from surgiplot.ai.scene_picker import HAS_MPL, HAS_PYVISTA, PointCloudPicker3D
 
 LOG = logging.getLogger("surgiplot")
+SCENE_GEOMETRY_EXTENSIONS = {".ply", ".obj", ".stl", ".xyz", ".pts", ".csv", ".txt"}
+SCENE_COMPANION_EXTENSIONS = {
+    ".mtl",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".tif",
+    ".tiff",
+    ".bmp",
+    ".gif",
+    ".webp",
+}
+SCENE_TEXTURE_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".tif",
+    ".tiff",
+    ".bmp",
+    ".gif",
+    ".webp",
+}
 
 
 @dataclass
@@ -232,8 +254,144 @@ def _downsample_triangles(
     cols = np.asarray(colors, dtype=float)
     if tris.ndim != 3 or tris.shape[1:] != (3, 3) or limit <= 0 or len(tris) <= limit:
         return tris, cols
-    idx = np.linspace(0, len(tris) - 1, num=limit, dtype=int)
-    return tris[idx], cols[idx] if len(cols) == len(tris) else cols
+
+    centroids = np.mean(tris, axis=1)
+    mins = np.min(centroids, axis=0)
+    spans = np.maximum(np.max(centroids, axis=0) - mins, 1e-9)
+    centroids_norm = (centroids - mins) / spans
+
+    if cols.ndim == 2 and len(cols) == len(tris) and cols.shape[1] == 3:
+        color_bins = np.clip(np.floor(cols * 7.0), 0, 7).astype(int)
+        sort_order = np.lexsort(
+            (
+                color_bins[:, 2],
+                color_bins[:, 1],
+                color_bins[:, 0],
+                np.floor(centroids_norm[:, 2] * 31.0).astype(int),
+                np.floor(centroids_norm[:, 1] * 31.0).astype(int),
+                np.floor(centroids_norm[:, 0] * 31.0).astype(int),
+            )
+        )
+    else:
+        sort_order = np.lexsort(
+            (
+                np.floor(centroids_norm[:, 2] * 31.0).astype(int),
+                np.floor(centroids_norm[:, 1] * 31.0).astype(int),
+                np.floor(centroids_norm[:, 0] * 31.0).astype(int),
+            )
+        )
+
+    grouped = np.array_split(sort_order, limit)
+    keep_indices: List[int] = []
+    keep_colors: List[np.ndarray] = []
+    for group in grouped:
+        if len(group) == 0:
+            continue
+        group_centroids = centroids[group]
+        centroid_mean = np.mean(group_centroids, axis=0)
+        d2 = np.sum((group_centroids - centroid_mean) ** 2, axis=1)
+        representative = int(group[int(np.argmin(d2))])
+        keep_indices.append(representative)
+        if cols.ndim == 2 and len(cols) == len(tris) and cols.shape[1] == 3:
+            keep_colors.append(np.mean(cols[group], axis=0))
+
+    reduced_tris = tris[np.asarray(keep_indices, dtype=int)]
+    if keep_colors:
+        reduced_cols = np.clip(np.vstack(keep_colors), 0.0, 1.0)
+    else:
+        reduced_cols = cols
+    return reduced_tris, reduced_cols
+
+
+def _closest_points_on_triangles(query: np.ndarray, triangles: np.ndarray) -> np.ndarray:
+    q = np.asarray(query, dtype=float).reshape(3,)
+    tris = np.asarray(triangles, dtype=float)
+    a = tris[:, 0, :]
+    b = tris[:, 1, :]
+    c = tris[:, 2, :]
+    ab = b - a
+    ac = c - a
+    ap = q - a
+
+    d1 = np.sum(ab * ap, axis=1)
+    d2 = np.sum(ac * ap, axis=1)
+    out = np.empty((len(tris), 3), dtype=float)
+
+    mask = (d1 <= 0.0) & (d2 <= 0.0)
+    out[mask] = a[mask]
+
+    bp = q - b
+    d3 = np.sum(ab * bp, axis=1)
+    d4 = np.sum(ac * bp, axis=1)
+    mask_b = (d3 >= 0.0) & (d4 <= d3)
+    out[mask_b] = b[mask_b]
+
+    vc = d1 * d4 - d3 * d2
+    mask_ab = (vc <= 0.0) & (d1 >= 0.0) & (d3 <= 0.0) & ~(mask | mask_b)
+    v = d1[mask_ab] / np.maximum(d1[mask_ab] - d3[mask_ab], 1e-12)
+    out[mask_ab] = a[mask_ab] + ab[mask_ab] * v[:, None]
+
+    cp = q - c
+    d5 = np.sum(ab * cp, axis=1)
+    d6 = np.sum(ac * cp, axis=1)
+    mask_c = (d6 >= 0.0) & (d5 <= d6)
+    out[mask_c] = c[mask_c]
+
+    vb = d5 * d2 - d1 * d6
+    mask_ac = (vb <= 0.0) & (d2 >= 0.0) & (d6 <= 0.0) & ~(mask | mask_b | mask_ab | mask_c)
+    w = d2[mask_ac] / np.maximum(d2[mask_ac] - d6[mask_ac], 1e-12)
+    out[mask_ac] = a[mask_ac] + ac[mask_ac] * w[:, None]
+
+    va = d3 * d6 - d5 * d4
+    mask_bc = (va <= 0.0) & ((d4 - d3) >= 0.0) & ((d5 - d6) >= 0.0) & ~(mask | mask_b | mask_ab | mask_c | mask_ac)
+    edge = c[mask_bc] - b[mask_bc]
+    denom = np.maximum((d4[mask_bc] - d3[mask_bc]) + (d5[mask_bc] - d6[mask_bc]), 1e-12)
+    w_bc = (d4[mask_bc] - d3[mask_bc]) / denom
+    out[mask_bc] = b[mask_bc] + edge * w_bc[:, None]
+
+    remain = ~(mask | mask_b | mask_ab | mask_c | mask_ac | mask_bc)
+    if np.any(remain):
+        denom = np.maximum(va[remain] + vb[remain] + vc[remain], 1e-12)
+        v_face = vb[remain] / denom
+        w_face = vc[remain] / denom
+        out[remain] = a[remain] + ab[remain] * v_face[:, None] + ac[remain] * w_face[:, None]
+    return out
+
+
+def _snap_pick_to_reference_geometry(
+    picked_xyz: np.ndarray,
+    reference_points: np.ndarray,
+    reference_surface: np.ndarray,
+) -> np.ndarray:
+    query = np.asarray(picked_xyz, dtype=float).reshape(3,)
+    surface = np.asarray(reference_surface, dtype=float)
+    if surface.ndim == 3 and surface.shape[1:] == (3, 3) and len(surface) > 0:
+        centroids = np.mean(surface, axis=1)
+        if len(surface) > 4096:
+            d2 = np.sum((centroids - query) ** 2, axis=1)
+            shortlist = surface[np.argpartition(d2, 4096)[:4096]]
+        else:
+            shortlist = surface
+        candidates = _closest_points_on_triangles(query, shortlist)
+        d2 = np.sum((candidates - query) ** 2, axis=1)
+        return candidates[int(np.argmin(d2))]
+
+    pts = np.asarray(reference_points, dtype=float)
+    if pts.ndim == 2 and pts.shape[1] == 3 and len(pts) > 0:
+        if len(pts) > 120000:
+            mins = np.min(pts, axis=0)
+            spans = np.maximum(np.max(pts, axis=0) - mins, 1e-9)
+            pts_norm = (pts - mins) / spans
+            q_norm = (query - mins) / spans
+            keys = np.floor(pts_norm * 128.0).astype(int)
+            q_key = np.floor(q_norm * 128.0).astype(int)
+            key_dist = np.sum((keys - q_key) ** 2, axis=1)
+            subset = pts[np.argpartition(key_dist, 120000)[:120000]]
+        else:
+            subset = pts
+        d2 = np.sum((subset - query) ** 2, axis=1)
+        return subset[int(np.argmin(d2))]
+    return query
 
 
 def _filter_scene_cloud(points: np.ndarray, colors: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -260,12 +418,171 @@ def _filter_scene_cloud(points: np.ndarray, colors: np.ndarray) -> Tuple[np.ndar
     return pts[keep], cols[keep]
 
 
+def _textured_surface_display_limit(profile: ReconstructionProfile) -> int:
+    mode = str(profile.render_mode or "balanced").strip().lower()
+    if mode == "fast":
+        return 10000
+    if mode == "quality":
+        return 28000
+    return 16000
+
+
+def _cluster_triangle_vertices(
+    triangles: np.ndarray,
+    resolution: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    tris = np.asarray(triangles, dtype=float)
+    verts = tris.reshape(-1, 3)
+    mins = np.min(verts, axis=0)
+    spans = np.maximum(np.max(verts, axis=0) - mins, 1e-9)
+    res = max(int(resolution), 2)
+    scaled = np.clip((verts - mins) / spans, 0.0, 1.0 - 1e-12)
+    keys = np.floor(scaled * res).astype(np.int32)
+    unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
+    sums = np.zeros((len(unique_keys), 3), dtype=float)
+    counts = np.zeros((len(unique_keys), 1), dtype=float)
+    np.add.at(sums, inverse, verts)
+    np.add.at(counts[:, 0], inverse, 1.0)
+    clustered = sums / np.maximum(counts, 1.0)
+    tri_indices = inverse.reshape(-1, 3)
+    return clustered, tri_indices, inverse
+
+
+def _compute_vertex_quadrics(
+    triangles: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    tris = np.asarray(triangles, dtype=float)
+    verts = tris.reshape(-1, 3)
+    quantized = np.round(verts, decimals=8)
+    unique_verts, inverse = np.unique(quantized, axis=0, return_inverse=True)
+    tri_indices = inverse.reshape(-1, 3).astype(np.int64)
+    quadrics = np.zeros((len(unique_verts), 4, 4), dtype=float)
+
+    for face in tri_indices:
+        a, b, c = unique_verts[face]
+        normal = np.cross(b - a, c - a)
+        norm = float(np.linalg.norm(normal))
+        if norm <= 1e-12:
+            continue
+        normal = normal / norm
+        d = -float(np.dot(normal, a))
+        plane = np.array([normal[0], normal[1], normal[2], d], dtype=float)
+        Kp = np.outer(plane, plane)
+        quadrics[face[0]] += Kp
+        quadrics[face[1]] += Kp
+        quadrics[face[2]] += Kp
+    return unique_verts.astype(float, copy=False), tri_indices, quadrics
+
+
+def _solve_quadric_optimal_position(
+    quadric: np.ndarray,
+    fallback_points: np.ndarray,
+) -> np.ndarray:
+    q = np.asarray(quadric, dtype=float)
+    pts = np.asarray(fallback_points, dtype=float)
+    if pts.ndim != 2 or pts.shape[1] != 3 or len(pts) == 0:
+        return np.zeros(3, dtype=float)
+    A = q[:3, :3]
+    b = -q[:3, 3]
+    try:
+        if np.linalg.cond(A) < 1e8:
+            candidate = np.linalg.solve(A, b)
+            if np.all(np.isfinite(candidate)):
+                return candidate.astype(float, copy=False)
+    except Exception:
+        pass
+    return np.mean(pts, axis=0)
+
+
+def _decimate_surface_quadric_cluster(
+    triangles: np.ndarray,
+    colors: np.ndarray,
+    limit: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    tris = np.asarray(triangles, dtype=float)
+    cols = np.asarray(colors, dtype=float)
+    if tris.ndim != 3 or tris.shape[1:] != (3, 3) or limit <= 0 or len(tris) <= limit:
+        return tris, cols
+
+    unique_verts, orig_tri_indices, vertex_quadrics = _compute_vertex_quadrics(tris)
+
+    def build_for_resolution(resolution: int) -> Tuple[np.ndarray, np.ndarray]:
+        clustered, tri_indices, _flat_inverse = _cluster_triangle_vertices(tris, resolution)
+        cluster_quadrics = np.zeros((len(clustered), 4, 4), dtype=float)
+        original_vertex_cluster = np.empty(len(unique_verts), dtype=np.int64)
+
+        tri_cluster_indices = tri_indices.reshape(-1)
+        for tri_vertex_idx, cluster_idx in zip(orig_tri_indices.reshape(-1), tri_cluster_indices):
+            original_vertex_cluster[int(tri_vertex_idx)] = int(cluster_idx)
+
+        for vid, cluster_idx in enumerate(original_vertex_cluster):
+            cluster_quadrics[cluster_idx] += vertex_quadrics[vid]
+
+        representatives = clustered.copy()
+        for cluster_idx in range(len(clustered)):
+            member_mask = original_vertex_cluster == cluster_idx
+            if not np.any(member_mask):
+                continue
+            member_points = unique_verts[member_mask]
+            representatives[cluster_idx] = _solve_quadric_optimal_position(
+                cluster_quadrics[cluster_idx],
+                member_points,
+            )
+
+        degenerate = (
+            (tri_indices[:, 0] == tri_indices[:, 1])
+            | (tri_indices[:, 0] == tri_indices[:, 2])
+            | (tri_indices[:, 1] == tri_indices[:, 2])
+        )
+        tri_indices = tri_indices[~degenerate]
+        if len(tri_indices) == 0:
+            return np.empty((0, 3, 3), dtype=float), np.empty((0, 3), dtype=float)
+
+        order = np.sort(tri_indices, axis=1)
+        _, unique_idx, inverse_faces = np.unique(order, axis=0, return_index=True, return_inverse=True)
+        tri_indices = tri_indices[unique_idx]
+        reduced_tris = representatives[tri_indices]
+
+        if cols.ndim == 2 and len(cols) == len(tris) and cols.shape[1] == 3:
+            face_colors = np.zeros((len(unique_idx), 3), dtype=float)
+            face_counts = np.zeros((len(unique_idx), 1), dtype=float)
+            kept_inverse = inverse_faces
+            src_cols = cols[~degenerate]
+            np.add.at(face_colors, kept_inverse, src_cols)
+            np.add.at(face_counts[:, 0], kept_inverse, 1.0)
+            reduced_cols = np.clip(face_colors / np.maximum(face_counts, 1.0), 0.0, 1.0)
+        else:
+            reduced_cols = cols
+        return reduced_tris, reduced_cols
+
+    max_resolution = max(6, int(np.ceil(np.cbrt(max(len(tris), 8) * 2.0))))
+    best_tris = np.empty((0, 3, 3), dtype=float)
+    best_cols = np.empty((0, 3), dtype=float)
+    best_count = -1
+    low, high = 2, max(8, max_resolution * 6)
+    while low <= high:
+        mid = (low + high) // 2
+        candidate_tris, candidate_cols = build_for_resolution(mid)
+        count = len(candidate_tris)
+        if count <= limit:
+            if count > best_count:
+                best_tris, best_cols, best_count = candidate_tris, candidate_cols, count
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    if best_count <= 0:
+        best_tris, best_cols = build_for_resolution(2)
+    return best_tris, best_cols
+
+
 def _optimize_scene_preview(
     xyz: np.ndarray,
     colors: np.ndarray,
     surface: np.ndarray,
     surface_colors: np.ndarray,
     profile: ReconstructionProfile,
+    prefer_textured_surface: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     xyz = np.asarray(xyz, dtype=float)
     colors = np.asarray(colors, dtype=float)
@@ -273,19 +590,28 @@ def _optimize_scene_preview(
     surface_colors = np.asarray(surface_colors, dtype=float)
     colors, surface_colors = _apply_geometry_color_fallback(xyz, colors, surface, surface_colors)
 
-    xyz, colors = _filter_scene_cloud(xyz, colors)
     raw_points = int(len(xyz))
     raw_faces = int(len(surface)) if surface.ndim == 3 else 0
+    filtered_xyz, filtered_colors = _filter_scene_cloud(xyz, colors)
 
     if raw_faces > 0:
-        surface, surface_colors = _downsample_triangles(surface, surface_colors, limit=profile.face_limit)
-        if HAS_PYVISTA:
+        surface_display_limit = int(profile.face_limit)
+        if prefer_textured_surface and surface_display_limit <= 0:
+            surface_display_limit = _textured_surface_display_limit(profile)
+        if prefer_textured_surface and surface_display_limit > 0:
+            surface, surface_colors = _decimate_surface_quadric_cluster(surface, surface_colors, limit=surface_display_limit)
+        else:
+            surface, surface_colors = _downsample_triangles(surface, surface_colors, limit=surface_display_limit)
+        if HAS_PYVISTA and prefer_textured_surface:
             xyz = np.asarray(xyz, dtype=float)
             colors = np.asarray(colors, dtype=float)
+        elif HAS_PYVISTA:
+            xyz = np.asarray(filtered_xyz, dtype=float)
+            colors = np.asarray(filtered_colors, dtype=float)
         else:
-            xyz, colors = _downsample_cloud(xyz, colors, limit=profile.render_limit)
+            xyz, colors = _downsample_cloud(filtered_xyz, filtered_colors, limit=profile.render_limit)
     else:
-        xyz, colors = _downsample_cloud(xyz, colors, limit=profile.render_limit)
+        xyz, colors = _downsample_cloud(filtered_xyz, filtered_colors, limit=profile.render_limit)
         surface = np.empty((0, 3, 3), dtype=float)
         surface_colors = np.empty((0, 3), dtype=float)
 
@@ -294,6 +620,7 @@ def _optimize_scene_preview(
         "preview_point_count": int(len(xyz)),
         "raw_face_count": raw_faces,
         "preview_face_count": int(len(surface)) if surface.ndim == 3 else 0,
+        "display_face_limit": int(surface_display_limit) if raw_faces > 0 else 0,
     }
     return xyz, colors, surface, surface_colors, meta
 
@@ -324,6 +651,61 @@ def _load_xyz_scene(path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.n
         xyz = _parse_point_rows(f.readlines())
     colors = np.tile(np.array([[0.60, 0.67, 0.82]], dtype=float), (len(xyz), 1))
     return xyz, colors, np.empty((0, 3, 3), dtype=float), np.empty((0, 3), dtype=float)
+
+
+def _companion_lookup(paths: Optional[Sequence[str]]) -> Dict[str, str]:
+    lookup: Dict[str, str] = {}
+    for raw in paths or []:
+        path = os.path.abspath(str(raw).strip())
+        if not path:
+            continue
+        lookup.setdefault(os.path.basename(path).lower(), path)
+    return lookup
+
+
+def _resolve_companion_path(base_dir: str, rel_path: str, companion_lookup: Dict[str, str]) -> Optional[str]:
+    rel = str(rel_path or "").strip()
+    if not rel:
+        return None
+    direct = os.path.abspath(os.path.join(base_dir, rel))
+    if os.path.exists(direct):
+        return direct
+    by_name = companion_lookup.get(os.path.basename(rel).lower())
+    if by_name and os.path.exists(by_name):
+        return by_name
+    return None
+
+
+def _bundle_prefers_textured_surface(primary_path: Optional[str], selected_paths: Sequence[str]) -> bool:
+    if not primary_path or os.path.splitext(primary_path)[1].lower() != ".obj":
+        return False
+    companion_lookup = _companion_lookup(selected_paths)
+    obj_dir = os.path.dirname(primary_path)
+    mtllibs: List[str] = []
+    try:
+        with open(primary_path, "r", encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                line = raw.strip()
+                if line.startswith("mtllib "):
+                    parts = line.split(maxsplit=1)
+                    if len(parts) > 1:
+                        mtllibs.append(parts[1].strip())
+    except Exception:
+        return False
+
+    for rel in mtllibs:
+        mtl_path = _resolve_companion_path(obj_dir, rel, companion_lookup)
+        if not mtl_path or not os.path.exists(mtl_path):
+            continue
+        try:
+            materials = _parse_mtl_file(mtl_path)
+        except Exception:
+            continue
+        for meta in materials.values():
+            tex_rel = str(meta.get("map_Kd", "") or "").strip()
+            if tex_rel and _resolve_companion_path(obj_dir, tex_rel, companion_lookup):
+                return True
+    return False
 
 
 def _load_image_rgb(path: str) -> Optional[np.ndarray]:
@@ -385,6 +767,57 @@ def _valid_face_indices(indices: Sequence[int], vertex_count: int) -> bool:
     return all(0 <= idx < vertex_count for idx in indices)
 
 
+def _build_obj_texture_payload(
+    xyz: np.ndarray,
+    texcoords: Sequence[Sequence[float]],
+    valid_faces: Sequence[Tuple[int, int, int]],
+    valid_face_uvs: Sequence[Optional[Tuple[int, int, int]]],
+    valid_face_materials: Sequence[Optional[str]],
+    material_texture_paths: Dict[str, str],
+) -> Optional[Dict[str, Any]]:
+    if len(valid_faces) == 0 or len(texcoords) == 0 or len(material_texture_paths) == 0:
+        return None
+
+    texture_path: Optional[str] = None
+    indexed_vertices: List[np.ndarray] = []
+    indexed_uvs: List[np.ndarray] = []
+    indexed_faces: List[List[int]] = []
+    pair_to_index: Dict[Tuple[int, int], int] = {}
+
+    for face, uv_face, material_name in zip(valid_faces, valid_face_uvs, valid_face_materials):
+        if uv_face is None or len(uv_face) != 3 or material_name not in material_texture_paths:
+            return None
+        current_texture_path = material_texture_paths[material_name]
+        if texture_path is None:
+            texture_path = current_texture_path
+        elif os.path.abspath(current_texture_path) != os.path.abspath(texture_path):
+            return None
+
+        tri: List[int] = []
+        for vid, uvid in zip(face, uv_face):
+            if uvid < 0 or uvid >= len(texcoords) or vid < 0 or vid >= len(xyz):
+                return None
+            key = (int(vid), int(uvid))
+            idx = pair_to_index.get(key)
+            if idx is None:
+                idx = len(indexed_vertices)
+                pair_to_index[key] = idx
+                indexed_vertices.append(np.asarray(xyz[vid], dtype=float))
+                indexed_uvs.append(np.asarray(texcoords[uvid][:2], dtype=float))
+            tri.append(idx)
+        if len(set(tri)) == 3:
+            indexed_faces.append(tri)
+
+    if texture_path is None or len(indexed_vertices) == 0 or len(indexed_faces) == 0:
+        return None
+    return {
+        "vertices": np.asarray(indexed_vertices, dtype=float),
+        "faces": np.asarray(indexed_faces, dtype=np.int64),
+        "uv": np.asarray(indexed_uvs, dtype=float),
+        "texture_path": os.path.abspath(texture_path),
+    }
+
+
 def _ply_scalar_dtype(name: str) -> str:
     mapping = {
         "char": "i1",
@@ -409,8 +842,9 @@ def _ply_scalar_dtype(name: str) -> str:
     return mapping[name]
 
 
-def _load_obj_scene(path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def _load_obj_scene(path: str, companion_files: Optional[Sequence[str]] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     vertices: List[List[float]] = []
+    vertex_colors_raw: List[List[float]] = []
     texcoords: List[List[float]] = []
     faces: List[Tuple[int, int, int]] = []
     face_texcoords: List[Optional[Tuple[int, int, int]]] = []
@@ -433,6 +867,13 @@ def _load_obj_scene(path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.n
                 parts = line.split()
                 if len(parts) >= 4:
                     vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
+                    if len(parts) >= 7:
+                        try:
+                            vertex_colors_raw.append([float(parts[4]), float(parts[5]), float(parts[6])])
+                        except Exception:
+                            vertex_colors_raw.append([])
+                    else:
+                        vertex_colors_raw.append([])
             elif line.startswith("vt "):
                 parts = line.split()
                 if len(parts) >= 3:
@@ -466,18 +907,32 @@ def _load_obj_scene(path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.n
         raise RuntimeError("The OBJ file does not contain enough vertices.")
     xyz = np.asarray(vertices, dtype=float)
     colors = np.tile(np.array([[0.75, 0.77, 0.82]], dtype=float), (len(xyz), 1))
+    if vertex_colors_raw and len(vertex_colors_raw) == len(vertices):
+        valid_vertex_colors = [vals for vals in vertex_colors_raw if len(vals) == 3]
+        if valid_vertex_colors:
+            vertex_colors = np.asarray(
+                [vals if len(vals) == 3 else [0.75, 0.77, 0.82] for vals in vertex_colors_raw],
+                dtype=float,
+            )
+            if np.max(vertex_colors) > 1.0:
+                vertex_colors = np.clip(vertex_colors / 255.0, 0.0, 1.0)
+            else:
+                vertex_colors = np.clip(vertex_colors, 0.0, 1.0)
+            colors = vertex_colors
 
     material_defs: Dict[str, Dict[str, str]] = {}
     obj_dir = os.path.dirname(path)
+    companion_lookup = _companion_lookup(companion_files)
     for rel in mtl_libraries:
-        mtl_path = os.path.join(obj_dir, rel)
-        if os.path.exists(mtl_path):
+        mtl_path = _resolve_companion_path(obj_dir, rel, companion_lookup)
+        if mtl_path and os.path.exists(mtl_path):
             try:
                 material_defs.update(_parse_mtl_file(mtl_path))
             except Exception:
                 continue
 
     material_textures: Dict[str, np.ndarray] = {}
+    material_texture_paths: Dict[str, str] = {}
     material_kd: Dict[str, np.ndarray] = {}
     for name, meta in material_defs.items():
         kd = meta.get("Kd")
@@ -490,8 +945,10 @@ def _load_obj_scene(path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.n
                     pass
         tex_rel = meta.get("map_Kd")
         if tex_rel:
-            tex_path = os.path.join(obj_dir, tex_rel)
-            tex_rgb = _load_image_rgb(tex_path)
+            tex_path = _resolve_companion_path(obj_dir, tex_rel, companion_lookup)
+            if tex_path and os.path.exists(tex_path):
+                material_texture_paths[name] = os.path.abspath(tex_path)
+            tex_rgb = _load_image_rgb(tex_path) if tex_path else None
             if tex_rgb is not None:
                 material_textures[name] = tex_rgb
 
@@ -508,6 +965,7 @@ def _load_obj_scene(path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.n
     tri_colors_list: List[np.ndarray] = []
     vertex_color_sum = np.zeros((len(xyz), 3), dtype=float)
     vertex_color_count = np.zeros((len(xyz), 1), dtype=float)
+    has_vertex_colors = bool(vertex_colors_raw and any(len(vals) == 3 for vals in vertex_colors_raw))
     for face, uv_face, material_name in zip(valid_faces, valid_face_uvs, valid_face_materials):
         face_color = None
         if material_name and material_name in material_textures and uv_face is not None and len(texcoords) > 0:
@@ -522,19 +980,33 @@ def _load_obj_scene(path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.n
             if valid_uv_face and samples:
                 face_color = np.mean(np.vstack(samples), axis=0)
         if face_color is None and material_name and material_name in material_kd:
-            face_color = material_kd[material_name]
+            kd_color = material_kd[material_name]
+            if not (has_vertex_colors and np.allclose(kd_color, 1.0, atol=1e-6)):
+                face_color = kd_color
+        if face_color is None and has_vertex_colors:
+            face_color = np.mean(colors[np.asarray(face, dtype=int)], axis=0)
         if face_color is None:
             face_color = np.array([0.74, 0.77, 0.83], dtype=float)
         tri_colors_list.append(np.asarray(face_color, dtype=float))
-        for vid in face:
-            vertex_color_sum[vid] += face_color
-            vertex_color_count[vid, 0] += 1.0
+        if not has_vertex_colors:
+            for vid in face:
+                vertex_color_sum[vid] += face_color
+                vertex_color_count[vid, 0] += 1.0
 
-    nonzero = vertex_color_count[:, 0] > 0
-    if np.any(nonzero):
-        colors[nonzero] = vertex_color_sum[nonzero] / vertex_color_count[nonzero]
+    if not has_vertex_colors:
+        nonzero = vertex_color_count[:, 0] > 0
+        if np.any(nonzero):
+            colors[nonzero] = vertex_color_sum[nonzero] / vertex_color_count[nonzero]
     tri_colors = np.vstack(tri_colors_list) if tri_colors_list else np.empty((0, 3), dtype=float)
-    return xyz, colors, tris, tri_colors
+    texture_payload = _build_obj_texture_payload(
+        xyz,
+        texcoords,
+        valid_faces,
+        valid_face_uvs,
+        valid_face_materials,
+        material_texture_paths,
+    )
+    return xyz, colors, tris, tri_colors, {"surface_texture_payload": texture_payload}
 
 
 def _load_stl_scene(path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -691,23 +1163,26 @@ def _load_ply_scene(path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.n
         return xyz, colors, surface, tri_colors
 
 
-def _load_scene_file(path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
+def _load_scene_file(path: str, companion_files: Optional[Sequence[str]] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     ext = os.path.splitext(path)[1].lower()
+    extra_meta: Dict[str, Any] = {}
     if ext in {".xyz", ".pts", ".csv", ".txt"}:
         xyz, colors, surface, surface_colors = _load_xyz_scene(path)
     elif ext == ".obj":
-        xyz, colors, surface, surface_colors = _load_obj_scene(path)
+        xyz, colors, surface, surface_colors, extra_meta = _load_obj_scene(path, companion_files=companion_files)
     elif ext == ".stl":
         xyz, colors, surface, surface_colors = _load_stl_scene(path)
     elif ext == ".ply":
         xyz, colors, surface, surface_colors = _load_ply_scene(path)
     else:
         raise RuntimeError("Unsupported 3D scene format. Supported: PLY, OBJ, STL, XYZ, CSV, TXT.")
-    return xyz, colors, surface, surface_colors, {
+    meta = {
         "backend": "imported_scene",
         "source_file": path,
         "format": ext.lstrip("."),
     }
+    meta.update(extra_meta)
+    return xyz, colors, surface, surface_colors, meta
 
 
 class AISceneReconstructionDialog(QtWidgets.QDialog):
@@ -731,6 +1206,7 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         self._raw_colors: Optional[np.ndarray] = None
         self._raw_surface_triangles_m: Optional[np.ndarray] = None
         self._raw_surface_colors: Optional[np.ndarray] = None
+        self._surface_texture_payload: Optional[Dict[str, Any]] = None
         self._pending_points_m: Dict[str, np.ndarray] = {}
         self._pending_order: List[str] = []
         self._scene_scale_to_mm = 1.0
@@ -741,6 +1217,7 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         self._scene_backend = "imported_scene"
         self._reconstruction_meta: Dict[str, Any] = {}
         self._source_scene_paths: List[str] = []
+        self._prefer_textured_surface = False
         self._scale_pick_mode = False
         self._scale_pick_points: List[np.ndarray] = []
         self._last_picked_xyz_mm: Optional[np.ndarray] = None
@@ -768,7 +1245,8 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         self.faces_limit_spin = QtWidgets.QSpinBox()
         self.faces_limit_spin.setRange(0, 250000)
         self.faces_limit_spin.setSingleStep(5000)
-        self.faces_limit_spin.setValue(int(self._active_profile.face_limit))
+        self.faces_limit_spin.setValue(0)
+        self.faces_limit_spin.setEnabled(False)
         self.preview_mode_combo = QtWidgets.QComboBox()
         self.preview_mode_combo.addItems(["Fast", "Balanced", "Quality"])
         self.preview_mode_combo.setCurrentText("Balanced")
@@ -787,6 +1265,8 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
 
         self.picker = PointCloudPicker3D()
         self.picker.picked.connect(self._on_picked_xyz)
+        if hasattr(self.picker, "landmark_selected"):
+            self.picker.landmark_selected.connect(self._on_landmark_selected)
 
         self.pending_table = QtWidgets.QTableWidget()
         self.pending_table.setColumnCount(4)
@@ -806,13 +1286,6 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         controls = QtWidgets.QGridLayout()
         controls.addWidget(self.btn_select_scene, 0, 0)
         controls.addWidget(self.btn_run, 0, 1)
-        controls.addWidget(self.btn_optimize, 0, 2)
-        controls.addWidget(QtWidgets.QLabel("Point limit:"), 0, 3)
-        controls.addWidget(self.points_limit_spin, 0, 4)
-        controls.addWidget(QtWidgets.QLabel("Face limit:"), 0, 5)
-        controls.addWidget(self.faces_limit_spin, 0, 6)
-        controls.addWidget(QtWidgets.QLabel("Preview:"), 0, 7)
-        controls.addWidget(self.preview_mode_combo, 0, 8)
         controls.addWidget(QtWidgets.QLabel("Known Distance:"), 1, 0)
         controls.addWidget(self.scale_cm_spin, 1, 1)
         controls.addWidget(self.btn_set_scale, 1, 2)
@@ -855,8 +1328,6 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
 
         self.btn_select_scene.clicked.connect(self._select_scene)
         self.btn_run.clicked.connect(self._run_reconstruction)
-        self.btn_optimize.clicked.connect(self._apply_preview_settings)
-        self.preview_mode_combo.currentTextChanged.connect(self._on_preview_mode_changed)
         self.btn_set_scale.toggled.connect(self._on_scale_mode_toggled)
         self.btn_collect.toggled.connect(self._set_collect_mode)
         self.btn_cancel.clicked.connect(self.reject)
@@ -876,14 +1347,13 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
     def _refresh_runtime_status(self) -> None:
         status = check_runtime()
         hardware = self._hardware.platform_summary
-        preview_mode = self.preview_mode_combo.currentText().strip()
         if status.available:
             self.lbl_runtime.setText(
                 f"{status.message}\n"
                 f"Source: Imported 3D Scene | Device: {status.device}\n"
                 f"Viewer backend: {self.picker.backend}\n"
                 f"Hardware: {hardware}\n"
-                f"Preview mode: {preview_mode} | point limit: {int(self.points_limit_spin.value())} | face limit: {int(self.faces_limit_spin.value())}\n"
+                "Default combined render: mesh + rendered imaging\n"
                 f"{self._active_profile.description}"
             )
         else:
@@ -896,30 +1366,17 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         self._hardware = _hardware_profile()
         self._active_profile = _recommended_profile(self._hardware)
         self.points_limit_spin.setValue(int(self._active_profile.render_limit))
-        self.faces_limit_spin.setValue(int(self._active_profile.face_limit))
+        self.faces_limit_spin.setValue(0)
         self.preview_mode_combo.setCurrentText(self._active_profile.render_mode.capitalize())
         self._refresh_runtime_status()
 
     def _current_profile(self) -> ReconstructionProfile:
         return ReconstructionProfile(
             render_limit=int(self.points_limit_spin.value()),
-            face_limit=int(self.faces_limit_spin.value()),
+            face_limit=0,
             description=self._active_profile.description,
             render_mode=self.preview_mode_combo.currentText().strip().lower(),
         )
-
-    def _on_preview_mode_changed(self, mode: str) -> None:
-        mode_norm = str(mode or "Balanced").strip().lower()
-        if mode_norm == "fast":
-            self.points_limit_spin.setValue(35000 if HAS_PYVISTA else 24000)
-            self.faces_limit_spin.setValue(18000 if HAS_PYVISTA else 12000)
-        elif mode_norm == "quality":
-            self.points_limit_spin.setValue(180000 if HAS_PYVISTA else 60000)
-            self.faces_limit_spin.setValue(0 if HAS_PYVISTA else 30000)
-        else:
-            self.points_limit_spin.setValue(int(self._active_profile.render_limit))
-            self.faces_limit_spin.setValue(int(self._active_profile.face_limit))
-        self._refresh_runtime_status()
 
     def _apply_preview_settings(self) -> None:
         self._refresh_runtime_status()
@@ -939,15 +1396,34 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
 
     def _select_scene(self) -> None:
         self.list_sources.clear()
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+        paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self,
-            "Select 3D Scene",
+            "Select 3D Scene And Companion Files",
             "",
-            "3D scenes (*.ply *.obj *.stl *.xyz *.csv *.txt);;All files (*)",
+            "3D scene bundles (*.ply *.obj *.stl *.xyz *.pts *.csv *.txt *.mtl *.png *.jpg *.jpeg *.tif *.tiff *.bmp *.gif *.webp);;All files (*)",
         )
-        if not path:
+        if not paths:
             return
-        self.list_sources.addItem(path)
+        normalized = []
+        seen = set()
+        for raw in paths:
+            path = os.path.abspath(str(raw).strip())
+            if path and path not in seen:
+                seen.add(path)
+                normalized.append(path)
+        geometry_paths = [path for path in normalized if os.path.splitext(path)[1].lower() in SCENE_GEOMETRY_EXTENSIONS]
+        if not geometry_paths:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Need a scene file",
+                "Select at least one supported scene file such as OBJ, PLY, STL, XYZ, PTS, CSV, or TXT.",
+            )
+            return
+        for path in geometry_paths:
+            self.list_sources.addItem(path)
+        for path in normalized:
+            if path not in geometry_paths:
+                self.list_sources.addItem(path)
         self._on_source_selection_changed(0)
 
     def _selected_scene_paths(self) -> List[str]:
@@ -957,13 +1433,29 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
             if self.list_sources.item(i).text().strip()
         ]
 
+    def _primary_scene_path(self) -> Optional[str]:
+        for path in self._selected_scene_paths():
+            if os.path.splitext(path)[1].lower() in SCENE_GEOMETRY_EXTENSIONS:
+                return path
+        return None
+
     def _on_source_selection_changed(self, row: int) -> None:
         paths = self._selected_scene_paths()
         if row < 0 or row >= len(paths):
-            noun = "scene file" if len(paths) == 1 else "scene files"
-            self.lbl_source_info.setText(f"{len(paths)} {noun} selected.")
+            primary = self._primary_scene_path()
+            extra_count = max(0, len(paths) - (1 if primary else 0))
+            if primary:
+                self.lbl_source_info.setText(
+                    f"Primary scene:\n{os.path.basename(primary)}\n"
+                    f"Companion files selected: {extra_count}"
+                )
+            else:
+                noun = "scene file" if len(paths) == 1 else "scene files"
+                self.lbl_source_info.setText(f"{len(paths)} {noun} selected.")
             return
-        self.lbl_source_info.setText(f"Imported scene source:\n{os.path.basename(paths[row])}")
+        path = paths[row]
+        role = "Primary scene" if path == self._primary_scene_path() else "Companion file"
+        self.lbl_source_info.setText(f"{role}:\n{os.path.basename(path)}")
 
     def _ensure_ready(self) -> bool:
         status = check_runtime()
@@ -1015,7 +1507,8 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
 
     def _run_reconstruction(self) -> None:
         paths = self._selected_scene_paths()
-        if not paths:
+        primary_path = self._primary_scene_path()
+        if not primary_path:
             QtWidgets.QMessageBox.warning(self, "Need a scene file", "Select a point cloud, mesh, or 3D model file first.")
             return
         if not self._ensure_ready():
@@ -1032,7 +1525,10 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         try:
             progress.setLabelText("Importing external 3D scene…")
             QtWidgets.QApplication.processEvents()
-            raw_xyz, raw_colors, raw_surface_triangles, raw_surface_colors, reconstruction_meta = _load_scene_file(paths[0])
+            raw_xyz, raw_colors, raw_surface_triangles, raw_surface_colors, reconstruction_meta = _load_scene_file(
+                primary_path,
+                companion_files=paths,
+            )
         except Exception as e:
             progress.close()
             LOG.exception("3D scene loading failed.")
@@ -1046,7 +1542,13 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         self._raw_colors = np.asarray(raw_colors, dtype=float)
         self._raw_surface_triangles_m = np.asarray(raw_surface_triangles, dtype=float)
         self._raw_surface_colors = np.asarray(raw_surface_colors, dtype=float)
+        self._prefer_textured_surface = (
+            self._raw_surface_triangles_m.ndim == 3
+            and self._raw_surface_triangles_m.shape[1:] == (3, 3)
+            and len(self._raw_surface_triangles_m) > 0
+        )
         self._reconstruction_meta = reconstruction_meta
+        self._surface_texture_payload = reconstruction_meta.get("surface_texture_payload")
         self._source_scene_paths = list(paths)
         self._scene_scale_to_mm = 1.0
         self._calibration_summary = "Not calibrated"
@@ -1067,6 +1569,7 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
             self._raw_surface_triangles_m if self._raw_surface_triangles_m is not None else np.empty((0, 3, 3), dtype=float),
             self._raw_surface_colors if self._raw_surface_colors is not None else np.empty((0, 3), dtype=float),
             self._current_profile(),
+            prefer_textured_surface=self._prefer_textured_surface,
         )
         self._merged_xyz_m = merged_xyz
         self._merged_colors = merged_colors
@@ -1080,12 +1583,17 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         if self._merged_xyz_m is None:
             return
         face_count = len(self._surface_triangles_mm) if self._surface_triangles_mm is not None else 0
+        render_target = "textured surface" if self._prefer_textured_surface else "imaging cloud"
+        display_face_limit = int(self._reconstruction_meta.get("display_face_limit", 0) or 0)
+        display_note = ""
+        if self._prefer_textured_surface and display_face_limit > 0:
+            display_note = f" Display mesh capped at {display_face_limit} faces for interactive speed."
         self.lbl_runtime.setText(
             "3D scene ready.\n"
             f"Preview vertices: {len(self._merged_xyz_m)}"
             + (f" | preview faces: {face_count}\n" if face_count > 0 else "\n")
-            + f"Current preview mode: {self.preview_mode_combo.currentText()} | points {int(self.points_limit_spin.value())} | faces {int(self.faces_limit_spin.value())}.\n"
-            + "Use 0 to keep the original geometry for that layer. Adjust the limits if needed, click Reload Preview, then set scale from two 3D points and collect landmarks for analysis."
+            + f"Display target: combined mesh + imaging.{display_note} "
+            + "Picking stays anchored to the original imported geometry for spatial accuracy."
         )
 
     def _update_picker(self) -> None:
@@ -1095,8 +1603,19 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         surface = None
         if self._surface_triangles_mm is not None and len(self._surface_triangles_mm) > 0:
             surface = self._surface_triangles_mm * self._scene_scale_to_mm
-        show_surface = surface is not None and len(surface) > 0
-        show_points = not show_surface
+        has_cloud = cloud.ndim == 2 and cloud.shape[1] == 3 and len(cloud) > 0
+        has_surface = surface is not None and len(surface) > 0
+        texture_payload = None
+        if isinstance(self._surface_texture_payload, dict):
+            texture_payload = {
+                "vertices": (np.asarray(self._surface_texture_payload.get("vertices", []), dtype=float) * self._scene_scale_to_mm).tolist(),
+                "faces": np.asarray(self._surface_texture_payload.get("faces", []), dtype=int).tolist(),
+                "uv": np.asarray(self._surface_texture_payload.get("uv", []), dtype=float).tolist(),
+                "texture_path": str(self._surface_texture_payload.get("texture_path", "") or ""),
+            }
+        has_textured_surface = texture_payload is not None
+        show_points = has_cloud
+        show_surface = has_surface or has_textured_surface
         if hasattr(self.picker, "set_render_profile"):
             self.picker.set_render_profile(self.preview_mode_combo.currentText().strip().lower())
         self.picker.set_cloud(
@@ -1104,17 +1623,31 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
             colors=self._merged_colors,
             surface_triangles=surface,
             surface_colors=self._surface_colors,
+            surface_texture_payload=texture_payload,
             show_points=show_points,
             show_surface=show_surface,
             unit_label=self._coord_unit_label(),
         )
+
+    def _resolve_measurement_pick(self, xyz_mm: np.ndarray) -> np.ndarray:
+        picked_mm = np.asarray(xyz_mm, dtype=float).reshape(3,)
+        if self._raw_surface_triangles_m is not None and len(self._raw_surface_triangles_m) > 0:
+            return picked_mm
+        scale = float(self._scene_scale_to_mm) if abs(float(self._scene_scale_to_mm)) > 1e-12 else 1.0
+        picked_scene = picked_mm / scale
+        snapped_scene = _snap_pick_to_reference_geometry(
+            picked_scene,
+            self._raw_xyz_m if self._raw_xyz_m is not None else np.empty((0, 3), dtype=float),
+            self._raw_surface_triangles_m if self._raw_surface_triangles_m is not None else np.empty((0, 3, 3), dtype=float),
+        )
+        return np.asarray(snapped_scene, dtype=float).reshape(3,) * scale
 
     def _set_collect_mode(self, enabled: bool) -> None:
         self._collect_mode = bool(enabled)
         self.btn_collect.setText("Collect Point ON" if enabled else "Collect Point")
 
     def _on_picked_xyz(self, xyz_mm: np.ndarray) -> None:
-        arr = np.asarray(xyz_mm, dtype=float).reshape(3,)
+        arr = self._resolve_measurement_pick(xyz_mm)
         now = time.monotonic()
         if (
             self._last_picked_xyz_mm is not None
@@ -1179,6 +1712,9 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         has_any = bool(labels)
         for btn in (self.btn_rename, self.btn_delete, self.btn_undo, self.btn_clear, self.btn_ok):
             btn.setEnabled(has_any)
+        if hasattr(self.picker, "set_landmark_points"):
+            pts = np.vstack([self._pending_points_m[label] for label in labels]).astype(float) if labels else np.empty((0, 3), dtype=float)
+            self.picker.set_landmark_points(pts, labels, selected_label=self._selected_pending_label())
         self._on_pending_selection_changed()
 
     def _selected_pending_label(self) -> Optional[str]:
@@ -1192,6 +1728,23 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         selected = self._selected_pending_label()
         self.btn_rename.setEnabled(selected is not None)
         self.btn_delete.setEnabled(selected is not None)
+        if hasattr(self.picker, "set_landmark_points"):
+            labels = sorted(self._pending_points_m.keys())
+            pts = np.vstack([self._pending_points_m[label] for label in labels]).astype(float) if labels else np.empty((0, 3), dtype=float)
+            self.picker.set_landmark_points(pts, labels, selected_label=selected)
+
+    def _on_landmark_selected(self, label: str) -> None:
+        target = str(label or "").strip()
+        if not target:
+            return
+        labels = sorted(self._pending_points_m.keys())
+        if target not in labels:
+            return
+        row = labels.index(target)
+        self.pending_table.blockSignals(True)
+        self.pending_table.selectRow(row)
+        self.pending_table.blockSignals(False)
+        self._on_pending_selection_changed()
 
     def _rename_selected(self) -> None:
         old = self._selected_pending_label()
@@ -1232,16 +1785,24 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         self._refresh_pending_table()
 
     def _build_scene_meta(self) -> Dict[str, Any]:
-        if self._merged_xyz_m is None or self._merged_colors is None:
+        if self._raw_xyz_m is None or self._raw_colors is None:
             return {}
-        xyz_mm = self._merged_xyz_m * self._scene_scale_to_mm
-        colors = self._merged_colors
+        xyz_mm = self._raw_xyz_m * self._scene_scale_to_mm
+        colors = self._raw_colors
         surface_triangles = np.empty((0, 3, 3), dtype=float)
         surface_colors = np.empty((0, 3), dtype=float)
         if self._surface_triangles_mm is not None and len(self._surface_triangles_mm) > 0:
             surface_triangles = self._surface_triangles_mm * self._scene_scale_to_mm
             if self._surface_colors is not None:
                 surface_colors = self._surface_colors
+        surface_texture_payload = None
+        if isinstance(self._surface_texture_payload, dict):
+            surface_texture_payload = {
+                "vertices": (np.asarray(self._surface_texture_payload.get("vertices", []), dtype=float) * self._scene_scale_to_mm).tolist(),
+                "faces": np.asarray(self._surface_texture_payload.get("faces", []), dtype=int).tolist(),
+                "uv": np.asarray(self._surface_texture_payload.get("uv", []), dtype=float).tolist(),
+                "texture_path": str(self._surface_texture_payload.get("texture_path", "") or ""),
+            }
         return {
             "kind": "scene_import",
             "backend": self._scene_backend,
@@ -1250,10 +1811,13 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
             "cloud_rgb": colors.tolist(),
             "surface_triangles": surface_triangles.tolist(),
             "surface_rgb": surface_colors.tolist(),
+            "surface_texture_payload": surface_texture_payload,
             "calibration": self._calibration_summary,
             "scale_to_mm": float(self._scene_scale_to_mm),
             "preview_point_limit": int(self.points_limit_spin.value()),
-            "preview_face_limit": int(self.faces_limit_spin.value()),
+            "preview_face_limit": 0,
+            "measurement_reference": "original_imported_geometry",
+            "display_preference": "combined_scene",
             "reconstruction_meta": dict(self._reconstruction_meta),
         }
 
