@@ -211,7 +211,13 @@ def metric_vom(
 ):
     dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
     result = VOM(data=dataset, entry=_resolve_names(dataset, _split_csv(entry)), target=_resolve_names(dataset, _split_csv(target)), stand_dist=stand_dist)
-    _emit_json({"VOM_mm3": result.volume_mm3})
+    _emit_json(
+        {
+            "VoA_deg": result.voa_deg,
+            "VOM_mm3": result.vom_mm3,
+            "sVOM_mm3": result.svom_mm3,
+        }
+    )
 
 
 @metric_app.command("voa")
@@ -226,7 +232,7 @@ def metric_voa(
 ):
     dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
     result = VOA(data=dataset, entry=_resolve_names(dataset, _split_csv(entry)), target=_resolve_names(dataset, _split_csv(target)), stand_dist=stand_dist)
-    _emit_json({"VoA_deg": result.angle_deg})
+    _emit_json({"VoA_deg": result})
 
 
 @metric_app.command("svom")
@@ -241,7 +247,7 @@ def metric_svom(
 ):
     dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
     result = SVOM(data=dataset, entry=_resolve_names(dataset, _split_csv(entry)), target=_resolve_names(dataset, _split_csv(target)), stand_dist=stand_dist)
-    _emit_json({"sVOM_mm3": result.volume_mm3})
+    _emit_json({"sVOM_mm3": result})
 
 
 @metric_app.command("aoa-sf")
@@ -307,7 +313,14 @@ def metric_aoa(
         sf_rescale_radius_mm=sf_rescale_radius_mm,
         return_debug=False,
     )
-    _emit_json({"AoA_vertical_deg": result.vertical_deg, "AoA_horizontal_deg": result.horizontal_deg})
+    _emit_json(
+        {
+            "AoA_vertical_deg": result.aoa_vertical_deg,
+            "AoA_horizontal_deg": result.aoa_horizontal_deg,
+            "SF_area_mm2": result.sf_entry_area_mm2,
+            "SF_area_standardized_mm2": result.sf_entry_area_rescaled_mm2,
+        }
+    )
 
 
 @metric_app.command("sf")
@@ -336,7 +349,7 @@ def metric_sf(
         sf_rescale_radius_mm=sf_rescale_radius_mm,
         return_debug=False,
     )
-    _emit_json({"SF_area_mm2": result.area_mm2, "SF_area_standardized_mm2": result.standardized_area_mm2})
+    _emit_json({"SF_area_mm2": result})
 
 
 @metric_app.command("aoe")

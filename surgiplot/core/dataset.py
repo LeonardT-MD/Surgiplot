@@ -353,3 +353,82 @@ class Dataset:
             self.meta["source"] = source
         self.apply_labels_from_table(rows2, overwrite=True)
         return self
+
+    # ----------------------------
+    # Scientific metric shortcuts
+    # ----------------------------
+    def VOM(
+        self,
+        *,
+        entry,
+        target,
+        stand_dist: float = 10.0,
+        return_debug: bool = False,
+        **kwargs,
+    ):
+        from surgiplot.metrics import VOM_VOA
+
+        return VOM_VOA(
+            data=self,
+            entry=entry,
+            target=target,
+            stand_dist=stand_dist,
+            return_debug=return_debug,
+            **kwargs,
+        )
+
+    def VOA(self, *, entry, target, stand_dist: float = 10.0, **kwargs) -> float:
+        return float(self.VOM(entry=entry, target=target, stand_dist=stand_dist, **kwargs).voa_deg)
+
+    def SVOM(self, *, entry, target, stand_dist: float = 10.0, **kwargs) -> float:
+        return float(self.VOM(entry=entry, target=target, stand_dist=stand_dist, **kwargs).svom_mm3)
+
+    def AOA(
+        self,
+        *,
+        entry,
+        target,
+        sf_rescale_radius_mm=None,
+        return_debug: bool = False,
+        **kwargs,
+    ):
+        from surgiplot.metrics import AOA_SF
+
+        return AOA_SF(
+            data=self,
+            entry=entry,
+            target=target,
+            sf_rescale_radius_mm=sf_rescale_radius_mm,
+            return_debug=return_debug,
+            **kwargs,
+        )
+
+    def SF(self, *, entry, target, sf_rescale_radius_mm=None, **kwargs) -> float:
+        return float(
+            self.AOA(
+                entry=entry,
+                target=target,
+                sf_rescale_radius_mm=sf_rescale_radius_mm,
+                **kwargs,
+            ).sf_entry_area_mm2
+        )
+
+    def AOE(self, *, A, B, C, return_debug: bool = False, **kwargs):
+        from surgiplot.metrics import AOE
+
+        return AOE(data=self, A=A, B=B, C=C, return_debug=return_debug, **kwargs)
+
+    def DISTANCE_3D(self, *, A, B, return_debug: bool = False, **kwargs):
+        from surgiplot.metrics import DISTANCE_3D
+
+        return DISTANCE_3D(data=self, A=A, B=B, return_debug=return_debug, **kwargs)
+
+    def AREA_3D(self, *, polygon, return_debug: bool = False, **kwargs):
+        from surgiplot.metrics import AREA_3D
+
+        return AREA_3D(data=self, polygon=polygon, return_debug=return_debug, **kwargs)
+
+    def VOLUME_3D(self, *, points, return_debug: bool = False, **kwargs):
+        from surgiplot.metrics import VOLUME_3D
+
+        return VOLUME_3D(data=self, points=points, return_debug=return_debug, **kwargs)

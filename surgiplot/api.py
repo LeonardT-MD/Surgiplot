@@ -1,50 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from surgiplot.core.dataset import Dataset
 from surgiplot.core.io.loaders import load_dataset, load_points_from_manual
 from surgiplot.metrics import (
+    AOASFResult,
     AOA_SF,
     AOE,
     AREA_3D,
     DISTANCE_3D,
     VOLUME_3D,
+    VOMVOAResult,
     VOM_VOA,
 )
-
-
-@dataclass(frozen=True)
-class AOAResult:
-    vertical_deg: float
-    horizontal_deg: float
-    source: Any
-
-
-@dataclass(frozen=True)
-class SFResult:
-    area_mm2: float
-    standardized_area_mm2: float
-    source: Any
-
-
-@dataclass(frozen=True)
-class VOMResult:
-    volume_mm3: float
-    source: Any
-
-
-@dataclass(frozen=True)
-class VOAResult:
-    angle_deg: float
-    source: Any
-
-
-@dataclass(frozen=True)
-class SVOMResult:
-    volume_mm3: float
-    source: Any
 
 
 def load(
@@ -97,56 +66,43 @@ def rename_points(dataset: Dataset, mapping: Mapping[str, str]) -> Dataset:
     return dataset
 
 
-def AOA(*args, **kwargs) -> AOAResult:
+def AOA(*args, **kwargs) -> AOASFResult:
+    return AOA_SF(*args, **kwargs)
+
+
+def SF(*args, **kwargs) -> float:
     result = AOA_SF(*args, **kwargs)
-    return AOAResult(
-        vertical_deg=result.aoa_vertical_deg,
-        horizontal_deg=result.aoa_horizontal_deg,
-        source=result,
-    )
+    return result.sf_entry_area_mm2
 
 
-def SF(*args, **kwargs) -> SFResult:
-    result = AOA_SF(*args, **kwargs)
-    return SFResult(
-        area_mm2=result.sf_entry_area_mm2,
-        standardized_area_mm2=result.sf_entry_area_rescaled_mm2,
-        source=result,
-    )
+def VOM(*args, **kwargs) -> VOMVOAResult:
+    return VOM_VOA(*args, **kwargs)
 
 
-def VOM(*args, **kwargs) -> VOMResult:
+def VOA(*args, **kwargs) -> float:
     result = VOM_VOA(*args, **kwargs)
-    return VOMResult(volume_mm3=result.vom_mm3, source=result)
+    return result.voa_deg
 
 
-def VOA(*args, **kwargs) -> VOAResult:
+def SVOM(*args, **kwargs) -> float:
     result = VOM_VOA(*args, **kwargs)
-    return VOAResult(angle_deg=result.voa_deg, source=result)
-
-
-def SVOM(*args, **kwargs) -> SVOMResult:
-    result = VOM_VOA(*args, **kwargs)
-    return SVOMResult(volume_mm3=result.svom_mm3, source=result)
+    return result.svom_mm3
 
 
 __all__ = [
     "AOA",
-    "AOAResult",
     "AOA_SF",
+    "AOASFResult",
     "AOE",
     "AREA_3D",
     "DISTANCE_3D",
     "Dataset",
     "SF",
-    "SFResult",
     "SVOM",
-    "SVOMResult",
     "VOA",
-    "VOAResult",
     "VOM",
-    "VOMResult",
     "VOM_VOA",
+    "VOMVOAResult",
     "VOLUME_3D",
     "apply_labels",
     "from_points",
