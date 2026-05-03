@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -41,8 +42,36 @@ def version() -> None:
     _emit_json({"package": "surgiplot", "version": __version__})
 
 
+def _expand_range_token(token: str) -> list[str]:
+    text = str(token or "").strip()
+    if not text:
+        return []
+
+    patterns = [
+        r"^(?P<prefix>[A-Za-z_]+[_-]?)(?P<start>\d+)\s*[-:]\s*(?P<end>\d+)$",
+        r"^(?P<prefix>[A-Za-z_]+[_-]?)(?P<start>\d+)\s*[-:]\s*(?P=prefix)?(?P<end>\d+)$",
+        r"^(?P<start>\d+)\s*[-:]\s*(?P<end>\d+)$",
+    ]
+    for pattern in patterns:
+        match = re.fullmatch(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        prefix = match.groupdict().get("prefix") or ""
+        start = int(match.group("start"))
+        end = int(match.group("end"))
+        step = 1 if end >= start else -1
+        values = range(start, end + step, step)
+        if prefix:
+            return [f"{prefix}{idx}" for idx in values]
+        return [str(idx) for idx in values]
+    return [text]
+
+
 def _split_csv(raw: str) -> list[str]:
-    return [item.strip() for item in (raw or "").split(",") if item.strip()]
+    items: list[str] = []
+    for item in (raw or "").split(","):
+        items.extend(_expand_range_token(item))
+    return [item.strip() for item in items if item.strip()]
 
 
 def _pairs(values: Iterable[str], option_name: str) -> dict[str, str]:

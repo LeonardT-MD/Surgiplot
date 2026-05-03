@@ -157,6 +157,44 @@ class Dataset:
     # ----------------------------
     # Name resolution
     # ----------------------------
+    @staticmethod
+    def _expand_range_token(token: str) -> List[str]:
+        text = str(token or "").strip()
+        if not text:
+            return []
+
+        patterns = [
+            r"^(?P<prefix>[A-Za-z_]+[_-]?)(?P<start>\d+)\s*[-:]\s*(?P<end>\d+)$",
+            r"^(?P<prefix>[A-Za-z_]+[_-]?)(?P<start>\d+)\s*[-:]\s*(?P=prefix)?(?P<end>\d+)$",
+            r"^(?P<start>\d+)\s*[-:]\s*(?P<end>\d+)$",
+        ]
+        for pattern in patterns:
+            match = re.fullmatch(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            prefix = match.groupdict().get("prefix") or ""
+            start = int(match.group("start"))
+            end = int(match.group("end"))
+            step = 1 if end >= start else -1
+            values = range(start, end + step, step)
+            if prefix:
+                return [f"{prefix}{idx}" for idx in values]
+            return [str(idx) for idx in values]
+        return [text]
+
+    def expand_name_spec(self, spec: Union[str, Iterable[str]]) -> List[str]:
+        if isinstance(spec, str):
+            tokens = [spec]
+        else:
+            tokens = list(spec)
+
+        expanded: List[str] = []
+        for token in tokens:
+            if not isinstance(token, str):
+                raise TypeError("Name specifications must be strings.")
+            expanded.extend(self._expand_range_token(token))
+        return [item for item in expanded if item]
+
     def resolve_name(self, name: str) -> str:
         name = str(name).strip()
         if not name:
@@ -206,7 +244,7 @@ class Dataset:
         raise KeyError(f"Unknown point name/alias: '{name}'.")
 
     def resolve_names(self, names: Iterable[str]) -> List[str]:
-        return [self.resolve_name(n) for n in names]
+        return [self.resolve_name(n) for n in self.expand_name_spec(names)]
 
     def get(self, name: str) -> np.ndarray:
         key = self.resolve_name(name)
@@ -230,7 +268,10 @@ class Dataset:
         """
         # single name
         if isinstance(spec, str):
-            return self.get(spec).reshape(1, 3)
+            names = self.expand_name_spec(spec)
+            if len(names) == 1:
+                return self.get(names[0]).reshape(1, 3)
+            return np.vstack([self.get(name) for name in names])
 
         # if it's an ndarray already
         if isinstance(spec, np.ndarray):
@@ -249,7 +290,8 @@ class Dataset:
 
             # list of names
             if all(isinstance(x, str) for x in items):
-                return np.vstack([self.get(x) for x in items])
+                expanded = self.expand_name_spec(items)
+                return np.vstack([self.get(x) for x in expanded])
 
             # list of xyz
             return np.vstack([np.asarray(x, dtype=float).reshape(3,) for x in items])

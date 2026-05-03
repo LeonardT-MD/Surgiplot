@@ -388,23 +388,33 @@ surgiplot metric sf case_01_labeled.json \
   --pivot pivot
 ```
 
-### SF only
-
-```bash
-surgiplot metric sf case_01_labeled.json \
-  --cranial cranial \
-  --caudal caudal \
-  --medial medial \
-  --lateral lateral \
-  --pivot pivot
-```
-
 ### Area, distance, and volume
 
 ```bash
 surgiplot metric distance case_01_labeled.json --A point_1 --B point_2
 surgiplot metric area case_01_labeled.json --polygon point_1,point_2,point_3,point_4
 surgiplot metric volume case_01_labeled.json --points point_1,point_2,point_3,point_4,point_5,point_6
+```
+
+Point-list arguments also support compact numeric ranges, which is especially useful for polygonal area and sparse volume calls:
+
+```bash
+surgiplot metric area case_01_labeled.json --polygon point_1-4
+surgiplot metric volume case_01_labeled.json --points point_1-9
+```
+
+Accepted range styles include:
+
+- `point_1-9`
+- `point_1:9`
+- `1-9`
+
+The same range syntax is also supported by multi-point Python calls such as:
+
+```python
+result = ds.VOM(entry="point_1-4", target="point_10-13", stand_dist=10.0)
+area = ds.AREA_3D(polygon="point_1-4")
+volume = ds.VOLUME_3D(points="point_1-9")
 ```
 
 CLI outputs are emitted as structured JSON-like text, making them easy to capture in shell pipelines, notebooks, Snakemake rules, or institutional batch-processing environments.
@@ -471,20 +481,171 @@ point_2 4.0 5.0 6.0
 point_3\t7.0\t8.0\t9.0
 ```
 
-## GUI workflow
+## GUI guide
 
-The GUI remains the preferred environment for:
+The GUI is the preferred environment when the workflow begins from visual anatomy rather than from a pre-existing table of coordinates.
 
-- point curation and label editing
-- imported 3D scene scaling
-- direct point collection on an anatomical scene
-- interactive geometric inspection of metric constructs
+It is particularly useful for:
+
+- reviewing and editing point datasets interactively
+- importing a rendered 3D model or scene bundle
+- calibrating a scene to real-world scale
+- collecting landmarks directly on the rendered anatomy
+- inspecting metric geometry visually after computation
 
 Launch with:
 
 ```bash
 surgiplot_gui
 ```
+
+### Main GUI roles
+
+The GUI has two complementary roles:
+
+1. `dataset curation`
+   Load or edit a landmark dataset, assign or refine labels, and prepare the point set for scripting or metric computation.
+
+2. `scene-driven landmark acquisition`
+   Import a 3D scene, calibrate it, pick landmarks directly on the rendered model, then commit those landmarks back into the dataset for analysis.
+
+### Typical GUI workflow
+
+The usual end-to-end workflow is:
+
+1. open `surgiplot_gui`
+2. import or create a dataset, or start from an empty dataset if landmarks will be acquired from a 3D scene
+3. open the 3D scene workspace
+4. import the rendered scene or model bundle
+5. calibrate the scene scale from two known points
+6. collect labeled landmarks on the rendered model
+7. commit those landmarks to the dataset
+8. run the desired metric family in the main analysis viewer
+
+### 3D rendered scene workflow
+
+The scene-import workspace is designed for anatomical landmark acquisition on an imported 3D model.
+
+#### 1. Select the model bundle
+
+Use `Select Scene…` to choose the primary geometry file and any companion assets in one pass.
+
+Typical supported bundles include:
+
+- `OBJ + MTL + texture images`
+- `PLY`
+- `STL`
+- `XYZ / PTS / CSV / TXT` point-based scene files
+
+If companion files are present, Surgiplot keeps them associated with the primary geometry during import.
+
+#### 2. Load the scene
+
+Click `Load Scene`.
+
+At load time Surgiplot:
+
+- imports the scene geometry and colors
+- prepares the combined default rendering
+- keeps the imported scene available as measurement reference geometry
+
+The current default display target is a combined anatomical rendering:
+
+- `mesh`
+- `rendered imaging / points`
+
+This combination is shown together because it provides the best compromise between realism and interactive usability for the current renderer path.
+
+#### 3. Calibrate scale
+
+Before collecting final landmarks, calibrate the model to physical units.
+
+Use:
+
+- `Known Distance`
+- `Set Scale`
+
+Then:
+
+1. enter the known distance in centimeters
+2. activate `Set Scale`
+3. click two anatomical points in the rendered scene
+
+Surgiplot rescales the imported scene so that the picked distance matches the specified physical distance. After calibration, downstream coordinates are stored in millimetric space rather than arbitrary scene units.
+
+#### 4. Collect landmarks
+
+Turn on `Collect Point`, then click directly on the rendered anatomy.
+
+For each pick:
+
+- Surgiplot asks for a landmark label
+- the point is added to the pending landmark table
+- the point is shown back in the 3D viewer
+- the point remains selectable in both the table and the rendered scene
+
+This is useful for constructing datasets directly from 3D anatomical scenes before any CLI or Python analysis.
+
+#### 5. Refine the pending landmark set
+
+Before committing, the right-side pending table can be used to:
+
+- rename landmarks
+- delete a selected landmark
+- undo the last collected point
+- clear the pending set
+
+This lets the scene workspace function as a geometric acquisition step before dataset finalization.
+
+#### 6. Commit landmarks to the dataset
+
+When the pending landmark set is ready, click `Commit to Dataset`.
+
+Surgiplot stores:
+
+- the collected landmark coordinates
+- the scene-import provenance
+- scene calibration metadata
+- imported scene payload for later visualization in the analysis viewer
+
+### 3D picking behavior
+
+The current 3D picking workflow is designed so that landmark acquisition remains spatially faithful to the rendered model:
+
+- when a surface mesh is present, picks are resolved on the mesh surface
+- collected points remain visible in the 3D scene
+- selecting a point in the table highlights it in the rendered view
+- clicking near an existing rendered landmark can reselect it
+
+This makes the scene workspace usable not only for acquisition but also for immediate spatial verification.
+
+### Analysis after 3D acquisition
+
+After landmarks are committed, the main analysis/editor viewer becomes the place for metric interpretation.
+
+In that stage, Surgiplot can:
+
+- show the imported scene as background context
+- overlay landmarks and metric constructs on top of it
+- compute and inspect `VOM / sVOM / VoA`
+- compute and inspect `AoA / SF`
+- compute and inspect `AoE`, `distance`, `area`, and `volume`
+
+The imported scene is retained as a combined layer so that anatomical context remains visible during metric review.
+
+### Recommended GUI-to-CLI workflow
+
+For many research projects, the most practical pattern is:
+
+1. acquire or refine landmarks in the GUI
+2. commit and save the resulting dataset
+3. run repeated metrics in Python or through the CLI
+4. return to the GUI only when additional landmark refinement or visual verification is needed
+
+This creates a good separation between:
+
+- `GUI`: visual acquisition, curation, validation
+- `CLI / Python`: reproducible repeated computation, batch analysis, and manuscript-grade pipelines
 
 ## Package layout
 
