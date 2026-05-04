@@ -8,6 +8,8 @@
 
 # Surgiplot
 
+For a longer publication-oriented methods and usage manual, see [docs/SURGIPLOT_PUBLICATION_GUIDE.md](/Users/leonardo/Projects/Surgiplot/docs/SURGIPLOT_PUBLICATION_GUIDE.md).
+
 Surgiplot is a local scientific software environment for quantitative neuroanatomical and skull-base analysis. It provides:
 
 1. a desktop GUI for dataset curation, imported 3D scene landmark acquisition, and interactive visualization
