@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from surgiplot.core.dataset import Dataset
-from surgiplot.core.io.loaders import load_dataset, load_points_from_manual
 from surgiplot.metrics import (
     AOASFResult,
     AOA_SF,
@@ -14,6 +13,18 @@ from surgiplot.metrics import (
     VOMVOAResult,
     VOM_VOA,
 )
+
+
+def load_dataset(*args, **kwargs) -> Dataset:
+    from surgiplot.core.io.loaders import load_dataset as _load_dataset
+
+    return _load_dataset(*args, **kwargs)
+
+
+def load_points_from_manual(*args, **kwargs) -> Dataset:
+    from surgiplot.core.io.loaders import load_points_from_manual as _load_points_from_manual
+
+    return _load_points_from_manual(*args, **kwargs)
 
 
 def load(

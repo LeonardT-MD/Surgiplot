@@ -1,0 +1,14 @@
+scm git
+scmurl https://github.com/LeonardT-MD/SurgiplotToolkit
+scmrevision main
+
+depends Markups
+build_subdirectory .
+homepage https://github.com/LeonardT-MD/SurgiplotToolkit
+category Neurosurgery
+contributors Leonardo Tariciotti
+description 3D Slicer extension for Surgiplot operative corridor metrics, markups workflows, and scene-linked analysis.
+iconurl 
+screenshoturls 
+enabled 1
+status Beta

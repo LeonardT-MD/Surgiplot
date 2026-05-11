@@ -477,7 +477,8 @@ def VOM_VOA(
 
     target_normal = _polygon_normal(T)
     theta_vs_normal = _angle_deg(v1, target_normal)
-    voa = float(90.0 - abs(theta_vs_normal))
+    acute_theta_vs_normal = min(float(theta_vs_normal), float(180.0 - theta_vs_normal))
+    voa = float(90.0 - acute_theta_vs_normal)
     voa = max(0.0, min(90.0, voa))
 
     a_target = float(target_fit["ellipse_a"])
@@ -571,6 +572,7 @@ def VOM_VOA(
             "distance_h": H,
             "voa_deg": voa,
             "angle_vs_normal_deg": theta_vs_normal,
+            "acute_angle_vs_normal_deg": acute_theta_vs_normal,
             "tilt_deviation_deg": _tilt_deviation_deg(voa),
             "supplementary_volume_weight_endpoint": _supplementary_volume_weight_endpoint(voa),
             "supplementary_svom_adjustment_factor": supplementary_svom_adjustment_factor,

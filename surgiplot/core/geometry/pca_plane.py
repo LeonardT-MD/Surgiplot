@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import numpy as np
-from sklearn.decomposition import PCA
 
 def best_fit_plane_pca(points: np.ndarray):
     """Return centroid and normal vector of best-fit plane via PCA.
@@ -15,9 +14,13 @@ def best_fit_plane_pca(points: np.ndarray):
 
     c = pts.mean(axis=0)
     X = pts - c
-    pca = PCA(n_components=3).fit(X)
-    # components_ are principal axes; smallest variance direction is normal
-    basis = pca.components_.T  # columns
+
+    # Use NumPy SVD instead of sklearn PCA so the geometry core remains lightweight
+    # and importable in runtimes such as 3D Slicer.
+    _, _, vh = np.linalg.svd(X, full_matrices=False)
+    # Right singular vectors correspond to principal axes; the smallest-variance
+    # direction is the last axis and becomes the plane normal.
+    basis = vh.T  # columns
     normal = basis[:, 2]
     # normalize
     normal = normal / (np.linalg.norm(normal) + 1e-12)

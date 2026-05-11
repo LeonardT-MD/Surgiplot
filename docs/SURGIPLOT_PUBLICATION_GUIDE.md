@@ -237,7 +237,7 @@ Interpretation:
 - more expressive than a convex hull when the alpha-shape succeeds
 - still transparent because the fallback behavior is explicit
 
-## 5.4 AoE: Angle of Exposure
+## 5.4 AoE: Angle of exposure
 
 Implemented in [aoe.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/aoe.py).
 
@@ -274,7 +274,7 @@ Implemented in [aoa_sf.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/
 This family combines:
 
 - `AoA` — Angle of Attack
-- `SF` — Surgical Freedom
+- `SF` — surgical freedom
 
 The code uses a pragmatic anatomical convention:
 
