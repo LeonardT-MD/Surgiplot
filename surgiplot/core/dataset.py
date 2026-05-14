@@ -26,6 +26,17 @@ class Dataset:
     aliases: Dict[str, str] = field(default_factory=dict)
     meta: Dict[str, Any] = field(default_factory=dict)
 
+    def set_provenance(self, **fields: Any) -> None:
+        provenance = self.meta.setdefault("provenance", {})
+        for key, value in fields.items():
+            provenance[str(key)] = value
+
+    def get_provenance(self) -> Dict[str, Any]:
+        raw = self.meta.get("provenance", {})
+        if isinstance(raw, dict):
+            return dict(raw)
+        return {}
+
     # ----------------------------
     # Core point/alias management
     # ----------------------------

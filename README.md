@@ -159,3 +159,33 @@ The project therefore emphasizes:
 - stable dataset semantics
 - interface-independent metric definitions
 - explicit reproducibility of the landmarks used to generate each reported result
+
+## Provenance, comparison, and repeatability
+
+The current `Surgiplot` core now also includes a first study-level layer for:
+
+- acquisition provenance
+- metric-run registration
+- cross-modality comparison tables
+- repeatability summaries across repeated runs
+
+These capabilities are exposed most concretely in `SurgiplotToolkit`, but the underlying data model now exists in the shared core as well through:
+
+- [surgiplot/core/studies.py](/Users/leonardo/Projects/Surgiplot/surgiplot/core/studies.py)
+
+The intent is methodological rather than cosmetic. A reported metric should be traceable not only to a point set, but also to:
+
+- `subject_id`
+- `anatomical_target`
+- `acquisition_modality`
+- `operator`
+- `session_id`
+- interface context
+
+This allows the same metric family to be compared across:
+
+- different acquisition modalities
+- different observers
+- repeated sessions
+
+while preserving a stable run registry suitable for later statistical analysis.

@@ -3,6 +3,13 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from surgiplot.core.dataset import Dataset
+from surgiplot.core.studies import (
+    AcquisitionProvenance,
+    MetricRunRecord,
+    build_metric_run_record,
+    comparison_rows,
+    repeatability_rows,
+)
 from surgiplot.metrics import (
     AOASFResult,
     AOA_SF,
@@ -105,9 +112,11 @@ __all__ = [
     "AOA_SF",
     "AOASFResult",
     "AOE",
+    "AcquisitionProvenance",
     "AREA_3D",
     "DISTANCE_3D",
     "Dataset",
+    "MetricRunRecord",
     "SF",
     "SVOM",
     "VOA",
@@ -116,9 +125,12 @@ __all__ = [
     "VOMVOAResult",
     "VOLUME_3D",
     "apply_labels",
+    "build_metric_run_record",
+    "comparison_rows",
     "from_points",
     "load",
     "load_dataset",
     "load_points_from_manual",
     "rename_points",
+    "repeatability_rows",
 ]

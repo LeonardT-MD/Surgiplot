@@ -61,6 +61,26 @@ Whenever a metric is called, Surgiplot resolves user input to coordinates. Depen
 
 The range expansion feature is especially relevant for multi-point metrics such as area, volume, and corridor analyses. Its scientific significance is modest, but its practical significance is large: it reduces clerical error in repeated scripts and batch calls.
 
+### 2.3 Provenance and study-level records
+
+The ecosystem now also includes a study-layer abstraction intended to preserve the context in which a metric was generated. This layer is represented in the core by provenance and run-record objects that can be used to retain:
+
+- `subject_id`
+- `anatomical_target`
+- `acquisition_modality`
+- `operator`
+- `session_id`
+- `source_context`
+- `reference_anatomy`
+
+This addition is methodologically important once the same target is measured:
+
+- in repeated sessions
+- by different observers
+- from different acquisition modalities
+
+The aim is not to replace the landmark dataset, but to complement it. The point dataset preserves coordinate-level provenance; the run registry preserves the study-level identity of a metric call. Comparison tables and repeatability summaries are derived from this run-registry layer rather than from ad hoc spreadsheet editing after export.
+
 ## 3. Mathematical primitives
 
 ### 3.1 Euclidean distance

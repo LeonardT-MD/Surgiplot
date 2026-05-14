@@ -22,6 +22,11 @@ from slicer.ScriptedLoadableModule import (
 )
 
 from SurgiplotToolkitLib.surgiplot_bridge import SurgiplotMetricBridge
+from surgiplot.core.studies import (
+    build_metric_run_record,
+    comparison_rows,
+    repeatability_rows,
+)
 
 
 class SurgiplotToolkit(ScriptedLoadableModule):
@@ -1207,11 +1212,30 @@ class SurgiplotToolkitWidget(ScriptedLoadableModuleWidget):
             return str(text_attr())
         return str(text_attr)
 
+    def _combobox_text(self, widget) -> str:
+        current_text = getattr(widget, "currentText", "")
+        if callable(current_text):
+            return str(current_text())
+        return str(current_text)
+
     def _slider_value(self, widget) -> int:
         value_attr = getattr(widget, "value", 0)
         if callable(value_attr):
             return int(value_attr())
         return int(value_attr)
+
+    def _current_provenance_payload(self) -> dict[str, str]:
+        reference_node = self.referenceSelector.currentNode()
+        reference_name = reference_node.GetName() if reference_node is not None else ""
+        return {
+            "acquisition_modality": self._combobox_text(self.acquisitionModalityCombo).strip(),
+            "operator": self._lineedit_text(self.operatorEdit).strip(),
+            "session_id": self._lineedit_text(self.sessionIdEdit).strip(),
+            "source_context": "SurgiplotToolkit",
+            "reference_anatomy": str(reference_name).strip(),
+            "source_file": "",
+            "notes": "",
+        }
 
     def _next_prefixed_label(self, prefix: str) -> str:
         node = self._landmark_node
@@ -1533,8 +1557,29 @@ class SurgiplotToolkitWidget(ScriptedLoadableModuleWidget):
         self.subjectIdEdit.setPlaceholderText("Patient 1")
         self.anatomicalTargetEdit = qt.QLineEdit()
         self.anatomicalTargetEdit.setPlaceholderText("IAC")
+        self.acquisitionModalityCombo = qt.QComboBox()
+        self.acquisitionModalityCombo.setEditable(True)
+        self.acquisitionModalityCombo.addItems(
+            [
+                "",
+                "CT",
+                "MRI",
+                "Segmentation",
+                "3D model",
+                "Neuronavigation",
+                "Photogrammetry",
+                "Structured light scan",
+            ]
+        )
+        self.operatorEdit = qt.QLineEdit()
+        self.operatorEdit.setPlaceholderText("Observer A")
+        self.sessionIdEdit = qt.QLineEdit()
+        self.sessionIdEdit.setPlaceholderText("Session 1")
         export_form.addRow("Subject ID:", self.subjectIdEdit)
         export_form.addRow("Anatomical target:", self.anatomicalTargetEdit)
+        export_form.addRow("Acquisition modality:", self.acquisitionModalityCombo)
+        export_form.addRow("Operator:", self.operatorEdit)
+        export_form.addRow("Session ID:", self.sessionIdEdit)
         export_layout.addLayout(export_form)
         export_buttons_1 = qt.QHBoxLayout()
         self.appendResultDatasetButton = qt.QPushButton("Append Current Result")
@@ -1543,24 +1588,52 @@ class SurgiplotToolkitWidget(ScriptedLoadableModuleWidget):
         export_buttons_1.addWidget(self.appendPointsDatasetButton)
         export_layout.addLayout(export_buttons_1)
         export_buttons_2 = qt.QHBoxLayout()
+        self.refreshComparisonButton = qt.QPushButton("Build Comparison Table")
+        self.refreshRepeatabilityButton = qt.QPushButton("Build Repeatability Summary")
+        export_buttons_2.addWidget(self.refreshComparisonButton)
+        export_buttons_2.addWidget(self.refreshRepeatabilityButton)
+        export_layout.addLayout(export_buttons_2)
+        export_buttons_3 = qt.QHBoxLayout()
         self.exportResultsCsvButton = qt.QPushButton("Export Results CSV")
         self.exportResultsXlsxButton = qt.QPushButton("Export Results XLSX")
+        self.exportRunsCsvButton = qt.QPushButton("Export Runs CSV")
+        self.exportRunsXlsxButton = qt.QPushButton("Export Runs XLSX")
+        export_buttons_3.addWidget(self.exportResultsCsvButton)
+        export_buttons_3.addWidget(self.exportResultsXlsxButton)
+        export_buttons_3.addWidget(self.exportRunsCsvButton)
+        export_buttons_3.addWidget(self.exportRunsXlsxButton)
+        export_layout.addLayout(export_buttons_3)
+        export_buttons_4 = qt.QHBoxLayout()
         self.exportPointsCsvButton = qt.QPushButton("Export Points CSV")
         self.exportPointsXlsxButton = qt.QPushButton("Export Points XLSX")
+        self.exportComparisonCsvButton = qt.QPushButton("Export Comparison CSV")
+        self.exportComparisonXlsxButton = qt.QPushButton("Export Comparison XLSX")
+        self.exportRepeatabilityCsvButton = qt.QPushButton("Export Repeatability CSV")
+        self.exportRepeatabilityXlsxButton = qt.QPushButton("Export Repeatability XLSX")
         for btn in (
-            self.exportResultsCsvButton,
-            self.exportResultsXlsxButton,
             self.exportPointsCsvButton,
             self.exportPointsXlsxButton,
+            self.exportComparisonCsvButton,
+            self.exportComparisonXlsxButton,
+            self.exportRepeatabilityCsvButton,
+            self.exportRepeatabilityXlsxButton,
         ):
-            export_buttons_2.addWidget(btn)
-        export_layout.addLayout(export_buttons_2)
+            export_buttons_4.addWidget(btn)
+        export_layout.addLayout(export_buttons_4)
         self.appendResultDatasetButton.clicked.connect(self.onAppendCurrentResultToDataset)
         self.appendPointsDatasetButton.clicked.connect(self.onAppendCurrentPointsToDataset)
+        self.refreshComparisonButton.clicked.connect(self.onRefreshComparisonAndRepeatability)
+        self.refreshRepeatabilityButton.clicked.connect(self.onRefreshComparisonAndRepeatability)
         self.exportResultsCsvButton.clicked.connect(lambda: self.onExportDatasetFile("results", "csv"))
         self.exportResultsXlsxButton.clicked.connect(lambda: self.onExportDatasetFile("results", "xlsx"))
+        self.exportRunsCsvButton.clicked.connect(lambda: self.onExportDatasetFile("runs", "csv"))
+        self.exportRunsXlsxButton.clicked.connect(lambda: self.onExportDatasetFile("runs", "xlsx"))
         self.exportPointsCsvButton.clicked.connect(lambda: self.onExportDatasetFile("points", "csv"))
         self.exportPointsXlsxButton.clicked.connect(lambda: self.onExportDatasetFile("points", "xlsx"))
+        self.exportComparisonCsvButton.clicked.connect(lambda: self.onExportDatasetFile("comparison", "csv"))
+        self.exportComparisonXlsxButton.clicked.connect(lambda: self.onExportDatasetFile("comparison", "xlsx"))
+        self.exportRepeatabilityCsvButton.clicked.connect(lambda: self.onExportDatasetFile("repeatability", "csv"))
+        self.exportRepeatabilityXlsxButton.clicked.connect(lambda: self.onExportDatasetFile("repeatability", "xlsx"))
         layout.addWidget(export_box)
 
         preview_box = ctk.ctkCollapsibleButton()
@@ -1575,8 +1648,17 @@ class SurgiplotToolkitWidget(ScriptedLoadableModuleWidget):
         preview_layout.addLayout(preview_button_row)
         self.exportPreviewTabs = qt.QTabWidget()
         self.resultsPreviewTable = qt.QTableWidget()
+        self.runsPreviewTable = qt.QTableWidget()
+        self.comparisonPreviewTable = qt.QTableWidget()
+        self.repeatabilityPreviewTable = qt.QTableWidget()
         self.pointsPreviewTable = qt.QTableWidget()
-        for table in (self.resultsPreviewTable, self.pointsPreviewTable):
+        for table in (
+            self.resultsPreviewTable,
+            self.runsPreviewTable,
+            self.comparisonPreviewTable,
+            self.repeatabilityPreviewTable,
+            self.pointsPreviewTable,
+        ):
             table.setSelectionBehavior(qt.QAbstractItemView.SelectItems)
             table.setSelectionMode(qt.QAbstractItemView.ExtendedSelection)
             table.setEditTriggers(qt.QAbstractItemView.DoubleClicked | qt.QAbstractItemView.EditKeyPressed)
@@ -1585,6 +1667,9 @@ class SurgiplotToolkitWidget(ScriptedLoadableModuleWidget):
             if hasattr(header, "setStretchLastSection"):
                 header.setStretchLastSection(True)
         self.exportPreviewTabs.addTab(self.resultsPreviewTable, "Case Results")
+        self.exportPreviewTabs.addTab(self.runsPreviewTable, "Run Registry")
+        self.exportPreviewTabs.addTab(self.comparisonPreviewTable, "Comparison")
+        self.exportPreviewTabs.addTab(self.repeatabilityPreviewTable, "Repeatability")
         self.exportPreviewTabs.addTab(self.pointsPreviewTable, "Points Dataset")
         preview_layout.addWidget(self.exportPreviewTabs)
         self.refreshDatasetPreviewButton.clicked.connect(self.onRefreshExportPreview)
@@ -2739,8 +2824,23 @@ class SurgiplotToolkitWidget(ScriptedLoadableModuleWidget):
             payload = self._last_metric_payload
             if not payload or not payload.get("metric_family"):
                 raise ValueError("Compute a metric first.")
-            export_payload = self.logic.append_case_result_record(subject_id, anatomical_target, payload)
-            self._show_results(export_payload)
+            provenance = self._current_provenance_payload()
+            export_payload = self.logic.append_case_result_record(
+                subject_id,
+                anatomical_target,
+                payload,
+                provenance=provenance,
+            )
+            comparison_payload = self.logic.refresh_comparison_dataset()
+            repeatability_payload = self.logic.refresh_repeatability_dataset()
+            self._show_results(
+                {
+                    "action": "append_current_result_to_dataset",
+                    "case_results": export_payload,
+                    "comparison": comparison_payload,
+                    "repeatability": repeatability_payload,
+                }
+            )
             self.onRefreshExportPreview()
         except Exception as exc:
             self._show_error("Append current result failed", exc)
@@ -2751,7 +2851,12 @@ class SurgiplotToolkitWidget(ScriptedLoadableModuleWidget):
             rows = self._current_metric_points_snapshot()
             if not rows:
                 raise ValueError("No current metric points are available to append.")
-            export_payload = self.logic.append_points_record(subject_id, anatomical_target, rows)
+            export_payload = self.logic.append_points_record(
+                subject_id,
+                anatomical_target,
+                rows,
+                provenance=self._current_provenance_payload(),
+            )
             self._show_results(export_payload)
             self.onRefreshExportPreview()
         except Exception as exc:
@@ -2759,10 +2864,14 @@ class SurgiplotToolkitWidget(ScriptedLoadableModuleWidget):
 
     def onExportDatasetFile(self, dataset_kind: str, file_kind: str) -> None:
         try:
-            if dataset_kind == "results":
-                default_name = "surgiplot_case_results"
-            else:
-                default_name = "surgiplot_points_reproducibility"
+            default_names = {
+                "results": "surgiplot_case_results",
+                "runs": "surgiplot_metric_run_registry",
+                "comparison": "surgiplot_comparison_matrix",
+                "repeatability": "surgiplot_repeatability_summary",
+                "points": "surgiplot_points_reproducibility",
+            }
+            default_name = default_names.get(dataset_kind, f"surgiplot_{dataset_kind}")
             suffix = ".xlsx" if file_kind == "xlsx" else ".csv"
             dialog_result = qt.QFileDialog.getSaveFileName(
                 slicer.util.mainWindow(),
@@ -2813,7 +2922,25 @@ class SurgiplotToolkitWidget(ScriptedLoadableModuleWidget):
 
     def onRefreshExportPreview(self) -> None:
         self._populate_export_preview_table(self.resultsPreviewTable, "results")
+        self._populate_export_preview_table(self.runsPreviewTable, "runs")
+        self._populate_export_preview_table(self.comparisonPreviewTable, "comparison")
+        self._populate_export_preview_table(self.repeatabilityPreviewTable, "repeatability")
         self._populate_export_preview_table(self.pointsPreviewTable, "points")
+
+    def onRefreshComparisonAndRepeatability(self) -> None:
+        try:
+            comparison_payload = self.logic.refresh_comparison_dataset()
+            repeatability_payload = self.logic.refresh_repeatability_dataset()
+            self.onRefreshExportPreview()
+            self._show_results(
+                {
+                    "action": "refresh_comparison_and_repeatability",
+                    "comparison": comparison_payload,
+                    "repeatability": repeatability_payload,
+                }
+            )
+        except Exception as exc:
+            self._show_error("Build comparison/repeatability tables failed", exc)
 
     def _save_export_preview_table(self, table_widget, dataset_kind: str) -> None:
         headers = []
@@ -2833,6 +2960,9 @@ class SurgiplotToolkitWidget(ScriptedLoadableModuleWidget):
     def onSaveExportPreviewEdits(self) -> None:
         try:
             self._save_export_preview_table(self.resultsPreviewTable, "results")
+            self._save_export_preview_table(self.runsPreviewTable, "runs")
+            self._save_export_preview_table(self.comparisonPreviewTable, "comparison")
+            self._save_export_preview_table(self.repeatabilityPreviewTable, "repeatability")
             self._save_export_preview_table(self.pointsPreviewTable, "points")
             self.onRefreshExportPreview()
             self._show_results({"action": "save_export_preview_edits", "status": "ok"})
@@ -3489,6 +3619,12 @@ class SurgiplotToolkitLogic(ScriptedLoadableModuleLogic):
         dataset_key = str(dataset_kind).strip().lower()
         if dataset_key == "results":
             return self._get_node_by_name("Surgiplot Case Results Dataset")
+        if dataset_key == "runs":
+            return self._get_node_by_name("Surgiplot Metric Run Registry")
+        if dataset_key == "comparison":
+            return self._get_node_by_name("Surgiplot Comparison Matrix Dataset")
+        if dataset_key == "repeatability":
+            return self._get_node_by_name("Surgiplot Repeatability Summary Dataset")
         if dataset_key == "points":
             return self._get_node_by_name("Surgiplot Points Reproducibility Dataset")
         raise ValueError(f"Unknown dataset kind: {dataset_kind}")
@@ -3610,7 +3746,14 @@ class SurgiplotToolkitLogic(ScriptedLoadableModuleLogic):
         )
         return not any(name.endswith(suffix) for suffix in blocked_suffixes)
 
-    def append_case_result_record(self, subject_id: str, anatomical_target: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def append_case_result_record(
+        self,
+        subject_id: str,
+        anatomical_target: str,
+        payload: dict[str, Any],
+        *,
+        provenance: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         metric_family = str(payload.get("metric_family", "")).strip()
         if not metric_family:
             raise ValueError("Current payload does not contain a metric family.")
@@ -3679,6 +3822,12 @@ class SurgiplotToolkitLogic(ScriptedLoadableModuleLogic):
             rebuilt_rows.append([row_map.get(header, "") for header in headers])
         self._write_table_dataset(table_node, headers, rebuilt_rows)
         self._register_result_node(table_node, None)
+        run_payload = self.append_metric_run_record(
+            subject_id,
+            anatomical_target,
+            payload,
+            provenance=provenance or {},
+        )
         return {
             "action": "append_case_result_record",
             "table_node": table_node.GetName(),
@@ -3686,12 +3835,76 @@ class SurgiplotToolkitLogic(ScriptedLoadableModuleLogic):
             "anatomical_target": anatomical_target,
             "appended_metric_family": metric_family,
             "added_column_count": len(added_columns),
+            "run_registry": run_payload,
         }
 
-    def append_points_record(self, subject_id: str, anatomical_target: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    def append_metric_run_record(
+        self,
+        subject_id: str,
+        anatomical_target: str,
+        payload: dict[str, Any],
+        *,
+        provenance: dict[str, Any],
+    ) -> dict[str, Any]:
+        metric_family = str(payload.get("metric_family", "")).strip()
+        if not metric_family:
+            raise ValueError("Current payload does not contain a metric family.")
+        record = build_metric_run_record(
+            subject_id,
+            anatomical_target,
+            metric_family,
+            payload,
+            acquisition_modality=str(provenance.get("acquisition_modality", "")).strip(),
+            operator=str(provenance.get("operator", "")).strip(),
+            session_id=str(provenance.get("session_id", "")).strip(),
+            source_context=str(provenance.get("source_context", "")).strip(),
+            reference_anatomy=str(provenance.get("reference_anatomy", "")).strip(),
+            source_file=str(provenance.get("source_file", "")).strip(),
+            notes=str(provenance.get("notes", "")).strip(),
+        )
+        row = record.as_row()
+        table_node = self._get_or_create_dataset_table(
+            "Surgiplot Metric Run Registry",
+            list(row.keys()),
+        )
+        table = table_node.GetTable()
+        row_index = table.InsertNextBlankRow()
+        for key, value in row.items():
+            self._set_table_cell(table_node, row_index, key, value)
+        self._register_result_node(table_node, None)
+        return {
+            "action": "append_metric_run_record",
+            "table_node": table_node.GetName(),
+            "metric_family": metric_family,
+            "row_count_added": 1,
+        }
+
+    def append_points_record(
+        self,
+        subject_id: str,
+        anatomical_target: str,
+        rows: list[dict[str, Any]],
+        *,
+        provenance: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        provenance = provenance or {}
         table_node = self._get_or_create_dataset_table(
             "Surgiplot Points Reproducibility Dataset",
-            ["Subject ID", "Anatomical Target", "Metric Family", "Point Group", "Point Label", "X", "Y", "Z"],
+            [
+                "Subject ID",
+                "Anatomical Target",
+                "Acquisition Modality",
+                "Operator",
+                "Session ID",
+                "Source Context",
+                "Reference Anatomy",
+                "Metric Family",
+                "Point Group",
+                "Point Label",
+                "X",
+                "Y",
+                "Z",
+            ],
         )
         table = table_node.GetTable()
         inserted = 0
@@ -3699,6 +3912,11 @@ class SurgiplotToolkitLogic(ScriptedLoadableModuleLogic):
             row = table.InsertNextBlankRow()
             self._set_table_cell(table_node, row, "Subject ID", subject_id)
             self._set_table_cell(table_node, row, "Anatomical Target", anatomical_target)
+            self._set_table_cell(table_node, row, "Acquisition Modality", provenance.get("acquisition_modality", ""))
+            self._set_table_cell(table_node, row, "Operator", provenance.get("operator", ""))
+            self._set_table_cell(table_node, row, "Session ID", provenance.get("session_id", ""))
+            self._set_table_cell(table_node, row, "Source Context", provenance.get("source_context", ""))
+            self._set_table_cell(table_node, row, "Reference Anatomy", provenance.get("reference_anatomy", ""))
             self._set_table_cell(table_node, row, "Metric Family", row_payload.get("metric_family", ""))
             self._set_table_cell(table_node, row, "Point Group", row_payload.get("point_group", ""))
             self._set_table_cell(table_node, row, "Point Label", row_payload.get("point_label", ""))
@@ -3718,6 +3936,12 @@ class SurgiplotToolkitLogic(ScriptedLoadableModuleLogic):
         dataset_key = str(dataset_kind).strip().lower()
         if dataset_key == "results":
             node_name = "Surgiplot Case Results Dataset"
+        elif dataset_key == "runs":
+            node_name = "Surgiplot Metric Run Registry"
+        elif dataset_key == "comparison":
+            node_name = "Surgiplot Comparison Matrix Dataset"
+        elif dataset_key == "repeatability":
+            node_name = "Surgiplot Repeatability Summary Dataset"
         elif dataset_key == "points":
             node_name = "Surgiplot Points Reproducibility Dataset"
         else:
@@ -3744,6 +3968,109 @@ class SurgiplotToolkitLogic(ScriptedLoadableModuleLogic):
             "row_count": len(rows),
             "column_count": len(headers),
         }
+
+    def _load_metric_run_records(self) -> list[Any]:
+        table_node = self.get_dataset_table_node("runs")
+        if table_node is None:
+            return []
+        headers, rows = self._read_table_dataset(table_node)
+        header_map = {header: idx for idx, header in enumerate(headers)}
+        records = []
+        for row in rows:
+            def value(name: str) -> str:
+                idx = header_map.get(name)
+                if idx is None or idx >= len(row):
+                    return ""
+                return str(row[idx])
+            skip_fields = {
+                "Subject ID",
+                "Anatomical Target",
+                "Target Key",
+                "Metric Family",
+                "Acquisition Modality",
+                "Operator",
+                "Session ID",
+                "Source Context",
+                "Reference Anatomy",
+                "Source File",
+                "Notes",
+                "Created At (UTC)",
+            }
+            payload = {
+                header: value(header)
+                for header in headers
+                if header not in skip_fields
+            }
+            records.append(
+                build_metric_run_record(
+                    value("Subject ID"),
+                    value("Anatomical Target"),
+                    value("Metric Family"),
+                    payload,
+                    acquisition_modality=value("Acquisition Modality"),
+                    operator=value("Operator"),
+                    session_id=value("Session ID"),
+                    source_context=value("Source Context"),
+                    reference_anatomy=value("Reference Anatomy"),
+                    source_file=value("Source File"),
+                    notes=value("Notes"),
+                )
+            )
+        return records
+
+    def refresh_comparison_dataset(self) -> dict[str, Any]:
+        records = self._load_metric_run_records()
+        rows = comparison_rows(records)
+        if rows:
+            headers = []
+            for row in rows:
+                for key in row.keys():
+                    if key not in headers:
+                        headers.append(key)
+        else:
+            headers = [
+            "Subject ID",
+            "Anatomical Target",
+            "Target Key",
+            "Metric Family",
+            "Acquisition Modality",
+            "Operator",
+            "Session ID",
+            "Source Context",
+            "Reference Anatomy",
+            "Source File",
+            "Notes",
+            "Created At (UTC)",
+            "Comparison Group",
+        ]
+        table_rows = [[row.get(header, "") for header in headers] for row in rows]
+        payload = self.replace_dataset_table_contents("comparison", headers, table_rows)
+        payload["source_run_count"] = len(records)
+        return payload
+
+    def refresh_repeatability_dataset(self) -> dict[str, Any]:
+        records = self._load_metric_run_records()
+        rows = repeatability_rows(records)
+        headers = list(rows[0].keys()) if rows else [
+            "Subject ID",
+            "Anatomical Target",
+            "Target Key",
+            "Metric Family",
+            "Field",
+            "Replicate Count",
+            "Mean",
+            "SD",
+            "CV_percent",
+            "Min",
+            "Max",
+            "Acquisition Modalities",
+            "Operators",
+            "Sessions",
+        ]
+        table_rows = [[row.get(header, "") for header in headers] for row in rows]
+        payload = self.replace_dataset_table_contents("repeatability", headers, table_rows)
+        payload["source_run_count"] = len(records)
+        return payload
 
     def _xlsx_cell_ref(self, row_index: int, col_index: int) -> str:
         col_num = col_index + 1
