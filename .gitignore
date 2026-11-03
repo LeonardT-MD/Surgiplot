@@ -112,6 +112,10 @@ datasets/
 *.h5
 *.hdf5
 
+# Public, synthetic examples are intentionally versioned.
+!examples/
+!examples/*.csv
+
 # CLINICAL IMAGING / SLICER SCENES
 *.dcm
 *.nii

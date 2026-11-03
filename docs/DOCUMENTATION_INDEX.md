@@ -6,7 +6,7 @@ This index covers the standalone Python, command-line, and desktop Surgiplot sof
 
 | Reader | Recommended path |
 |---|---|
-| New user | [README](../README.md) → [Installation](INSTALLATION.md) → [CLI Reference](CLI_REFERENCE.md) or [GUI Guide](GUI_GUIDE.md) |
+| New user | [README](../README.md) → [Getting Started](GETTING_STARTED.md) → [CLI Reference](CLI_REFERENCE.md) or [GUI Guide](GUI_GUIDE.md) |
 | Python user | [Installation](INSTALLATION.md) → [Data Formats](DATA_FORMATS.md) → [Python API](PYTHON_API.md) |
 | Researcher defining a protocol | [Metric Reference](METRICS_REFERENCE.md) → [Validation](VALIDATION.md) → [Publication Guide](SURGIPLOT_PUBLICATION_GUIDE.md) |
 | Software reviewer | [Architecture](ARCHITECTURE.md) → [Metric Reference](METRICS_REFERENCE.md) → [Development](DEVELOPMENT.md) |
@@ -14,6 +14,7 @@ This index covers the standalone Python, command-line, and desktop Surgiplot sof
 
 ## Operational documentation
 
+- [Getting Started](GETTING_STARTED.md) — release installation, terminal syntax, a synthetic end-to-end tutorial, all metric families, GUI steps, Python use, expected outputs, and common failures.
 - [Installation and Deployment](INSTALLATION.md) — core, GUI, rendered-scene, Conda, platform, upgrade, and uninstall procedures.
 - [Data Formats and Coordinate Semantics](DATA_FORMATS.md) — normalized schemas, vendor imports, aliases, coordinate systems, units, and round trips.
 - [CLI Reference](CLI_REFERENCE.md) — every command, option family, range syntax, JSON output, and automation pattern.

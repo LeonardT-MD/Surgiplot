@@ -2,6 +2,13 @@
 
 All notable changes to Surgiplot are documented here. The project is pre-1.0; validation may become stricter between minor releases.
 
+## Unreleased
+
+### Documentation
+
+- added a consolidated Getting Started guide covering direct release installation, terminal syntax, a complete CLI walkthrough for every metric family, desktop and Python workflows, expected outputs, and common failures;
+- added a versioned synthetic tutorial dataset containing no patient information so all documented commands can be reproduced exactly.
+
 ## 0.2.0 — 2026-11-03
 
 ### Corrected

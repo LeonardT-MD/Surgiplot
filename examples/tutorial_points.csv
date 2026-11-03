@@ -1,0 +1,20 @@
+name,x,y,z,labels
+entry_1,-5,-5,10,entry posterior-right
+entry_2,5,-5,10,entry anterior-right
+entry_3,5,5,10,entry anterior-left
+entry_4,-5,5,10,entry posterior-left
+target_1,-2,-2,0,target posterior-right
+target_2,2,-2,0,target anterior-right
+target_3,2,2,0,target anterior-left
+target_4,-2,2,0,target posterior-left
+cranial,0,5,10,superior limit
+caudal,0,-5,10,inferior limit
+medial,-5,0,10,medial limit
+lateral,5,0,10,lateral limit
+pivot,0,0,0,target pivot
+entry_center,0,0,10,entry centroid
+target_center,0,0,0,target centroid
+volume_1,0,0,0,volume sample
+volume_2,2,0,0,volume sample
+volume_3,0,2,0,volume sample
+volume_4,0,0,2,volume sample

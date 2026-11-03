@@ -15,6 +15,8 @@ Surgiplot is a coordinate-native research software package for quantitative neur
 
 The software is designed for reproducible anatomical research. It is not a medical device, does not provide clinical recommendations, and has not been validated for autonomous diagnosis, treatment selection, or intraoperative navigation.
 
+**New users:** follow the [complete Getting Started guide](docs/GETTING_STARTED.md) for installation, terminal syntax, a synthetic worked example, every metric family, the desktop workflow, and Python use.
+
 ## Repository scope
 
 This repository contains the standalone Surgiplot software:
@@ -277,6 +279,7 @@ The study layer records:
 
 Start with the [Documentation Index](docs/DOCUMENTATION_INDEX.md). The main technical documents are:
 
+- [Getting Started: Installation, Terminal Syntax, and Complete Workflows](docs/GETTING_STARTED.md)
 - [Installation and Deployment](docs/INSTALLATION.md)
 - [Architecture and Execution Model](docs/ARCHITECTURE.md)
 - [Data Formats and Coordinate Semantics](docs/DATA_FORMATS.md)

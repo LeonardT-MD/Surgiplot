@@ -8,6 +8,8 @@ recursive-include docs *.md *.png
 exclude docs/SURGIPLOT_TOOLKIT_*.md
 exclude docs/SURGIPLOT_PERFORMANCE_MAINTENANCE.md
 
+recursive-include examples *.csv *.json
+
 recursive-include surgiplot *.py *.yml *.sh
 recursive-include tests *.py
 
