@@ -308,7 +308,7 @@ GitHub can generate citation metadata from [`CITATION.cff`](CITATION.cff). Cite 
 
 ## Authorship and contributions
 
-Surgiplot was created by Leonardo Tariciotti. Additional contributors should be credited through the Git history and release notes.
+Surgiplot was created by Dr. Leonardo Tariciotti MD. Additional contributors should be credited through the Git history and release notes.
 
 ## License
 
