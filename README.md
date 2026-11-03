@@ -8,6 +8,9 @@
 
 # Surgiplot
 
+[![CI](https://github.com/LeonardT-MD/Surgiplot/actions/workflows/ci.yml/badge.svg)](https://github.com/LeonardT-MD/Surgiplot/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Surgiplot is a coordinate-native research software package for quantitative neurosurgical anatomy. It converts named three-dimensional landmarks into inspectable morphometric constructs through one shared Python computation core, exposed through a command-line interface and a desktop graphical interface.
 
 The software is designed for reproducible anatomical research. It is not a medical device, does not provide clinical recommendations, and has not been validated for autonomous diagnosis, treatment selection, or intraoperative navigation.
@@ -304,4 +307,6 @@ GitHub can generate citation metadata from [`CITATION.cff`](CITATION.cff). Cite 
 
 Surgiplot was created by Leonardo Tariciotti. Additional contributors should be credited through the Git history and release notes.
 
-No explicit software license has yet been added to this repository. Until a license is selected, default copyright restrictions apply; public redistribution and reuse terms are therefore not granted automatically.
+## License
+
+Surgiplot is distributed under the [MIT License](LICENSE). The license permits software reuse and redistribution but does not alter the research-only scope, validation limitations, or medical-device disclaimer described above.

@@ -67,6 +67,7 @@ def test_sparse_volume_reconstruction_is_translation_invariant() -> None:
     assert baseline.debug is not None
     assert translated.debug is not None
     assert baseline.debug["reconstruction_method"] == translated.debug["reconstruction_method"]
+    assert baseline.debug["alpha_mm"] == pytest.approx(translated.debug["alpha_mm"], rel=1e-9, abs=1e-9)
 
 
 def test_volume_rejects_coplanar_input() -> None:

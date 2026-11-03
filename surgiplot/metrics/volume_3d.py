@@ -171,7 +171,7 @@ def _auto_alpha_shape(points: np.ndarray) -> Dict[str, Any]:
 
     tree = cKDTree(local_points)
     k = min(4, len(points))
-    dists, _ = tree.query(points, k=k)
+    dists, _ = tree.query(local_points, k=k)
     if dists.ndim == 1:
         local_spacing = float(np.median(dists))
     else:

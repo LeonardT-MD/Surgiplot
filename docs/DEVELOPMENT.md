@@ -200,4 +200,4 @@ Never commit generated clinical outputs. Removing a file in a new commit does no
 
 ## 14. Contribution and licensing status
 
-At version `0.2.0`, the repository does not yet contain a software license. Copyright therefore remains reserved by default. External contributors and redistributors need an explicit license decision from the owner before reuse terms can be considered clear. Add a reviewed `LICENSE` file and contribution policy before inviting broad external contributions.
+Surgiplot is distributed under the MIT License. Contributions must be compatible with that license and must not include patient data, restricted third-party code, model weights without redistribution permission, or institutional material that the contributor is not authorized to publish. Copyright and authorship attribution remain recorded in the license, citation metadata, Git history, and release notes.
