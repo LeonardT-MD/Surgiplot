@@ -6,18 +6,17 @@ This note is intended for readers who need a concise but precise account of how 
 
 ## 1. Core principle
 
-Surgiplot is not organized around a proprietary viewing state. It is organized around explicit 3D coordinates. Every metric in the system ultimately resolves to a set of named points in a shared coordinate frame and applies a documented geometric operation to them. This is the main reason why the same metric definitions can be exposed through a Python API, a CLI, a desktop GUI, and a 3D Slicer extension without changing the numerical output.
+Surgiplot is not organized around a proprietary viewing state. It is organized around explicit 3D coordinates. Every metric in the standalone system ultimately resolves to named points in a shared coordinate frame and applies a documented geometric operation to them. Python, CLI, and desktop GUI share the installed core. The separately versioned SurgiplotToolkit companion can reproduce that contract inside 3D Slicer when its vendored implementation and tests match the standalone release.
 
 ## 2. Numerical consistency across interfaces
 
-The front ends differ in interaction style, not in metric implementation. The same underlying functions are called from:
+The standalone front ends differ in interaction style, not in metric implementation. The same underlying functions are called from:
 
 - Python
 - CLI
 - desktop GUI
-- `SurgiplotToolkit` in 3D Slicer
 
-This was an explicit project goal because anatomical research often begins with interactive scene work and later moves into batch analysis. A framework that changed its definitions between those stages would not be scientifically defensible.
+This was an explicit project goal because anatomical research often begins with interactive scene work and later moves into batch analysis. Cross-repository Slicer comparisons additionally require explicit version reporting rather than an assumption of identity.
 
 ## 3. Best-fit plane implementation
 
@@ -39,7 +38,7 @@ Volume is reconstructed from sparse boundary points. The preferred path is an al
 
 ### 4.4 AoE
 
-AoE is the included angle at the pivot point between two rays. In the Slicer scene this is rendered both as a triangle and as an arc because the latter is usually the more anatomically legible representation.
+AoE is the principal included angle at the pivot point between two rays and is bounded to `[0°, 180°]`. It does not reconstruct a reflex angle and is not the complete vectorial circular AoE protocol. A companion Slicer scene may render the construct as both a triangle and an arc.
 
 ### 4.5 AoA / SF
 
@@ -49,7 +48,7 @@ Standardized SF is not a normalization by arbitrary coefficient. It is a true ge
 
 ### 4.6 VOM / sVOM / VoA
 
-The `VOM / sVOM / VoA` family is the most model-specific part of the framework. It assumes that corridor geometry can be summarized by entry and target polygons whose areas are preserved while their cross-sections are regularized into ellipses. This is an analytical design choice. It sacrifices local contour irregularity in exchange for stable corridor comparison and interpretable longitudinal geometry.
+The `VOM / sVOM / VoA` family is the most model-specific part of the framework. It assumes that corridor geometry can be summarized by entry and target polygons whose areas are preserved while their cross-sections are regularized into ellipses using SVD-axis extent ratios. A capped triangulated loft is evaluated in a centroid-shifted local frame. This is an analytical design choice: it sacrifices local contour irregularity in exchange for stable corridor comparison and interpretable longitudinal geometry.
 
 The `VoA` implementation was explicitly corrected so that angle-to-plane is derived from the acute angle to the target normal. Without that correction, opposite normal orientations could generate misleading zero-degree values even in clearly oblique anatomical scenarios.
 

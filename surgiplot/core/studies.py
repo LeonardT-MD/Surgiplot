@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from math import isnan
+from math import isfinite
 from statistics import mean, pstdev
 from typing import Any, Dict, Iterable, List, Mapping
 import json
@@ -219,7 +219,7 @@ def repeatability_rows(records: Iterable[MetricRunRecord]) -> List[Dict[str, str
                     value = float(raw)
                 except Exception:
                     continue
-                if isnan(value):
+                if not isfinite(value):
                     continue
                 numeric_values.append(value)
             if not numeric_values:
@@ -229,7 +229,7 @@ def repeatability_rows(records: Iterable[MetricRunRecord]) -> List[Dict[str, str
             field_sd = pstdev(numeric_values) if n > 1 else 0.0
             field_min = min(numeric_values)
             field_max = max(numeric_values)
-            cv_percent = (field_sd / field_mean * 100.0) if abs(field_mean) > 1e-12 else 0.0
+            cv_percent = (field_sd / abs(field_mean) * 100.0) if abs(field_mean) > 1e-12 else 0.0
             rows.append(
                 {
                     "Subject ID": subject_id,

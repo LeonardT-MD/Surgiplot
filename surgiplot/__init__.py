@@ -1,4 +1,4 @@
-from importlib.metadata import version as _pkg_version
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
 from .api import (
     AOA,
@@ -28,8 +28,8 @@ from .api import (
 
 try:
     __version__ = _pkg_version("surgiplot")
-except Exception:
-    __version__ = "0.1.0"
+except PackageNotFoundError:
+    __version__ = "0.2.0"
 
 __all__ = [
     "AOA",

@@ -118,8 +118,8 @@ def _resolve_name(dataset, name: str) -> str:
 
 
 def _emit_json(payload: dict[str, Any]) -> None:
-    rich_print_json = json.dumps(payload, indent=2, sort_keys=True)
-    rich_print(rich_print_json)
+    # Machine-readable commands must not pass JSON through Rich markup parsing.
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
 
 
 def _save_dataset(dataset, out: str) -> None:

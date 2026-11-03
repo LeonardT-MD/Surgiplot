@@ -2,7 +2,7 @@
 
 ## Scientific, Computational, and Practical Guide for Coordinate-Based Neurosurgical Analysis
 
-This document is a methods-oriented companion to the main repository [README](/Users/leonardo/Projects/Surgiplot/README.md). It is intended for:
+This document is a methods-oriented companion to the main repository [README](../README.md). It is intended for:
 
 - internal lab documentation
 - reproducible research workflows
@@ -44,7 +44,7 @@ This design is valuable in research because it makes the measurement pipeline:
 
 ## 2. Dataset Model
 
-The canonical container in Surgiplot is the `Dataset` object, defined in [dataset.py](/Users/leonardo/Projects/Surgiplot/surgiplot/core/dataset.py).
+The canonical container in Surgiplot is the `Dataset` object, defined in [dataset.py](../surgiplot/core/dataset.py).
 
 Each dataset stores:
 
@@ -93,7 +93,7 @@ These range expressions are expanded consistently in both CLI and Python whereve
 
 ## 3. Supported Inputs
 
-Surgiplot supports several input classes through the loaders in [loaders.py](/Users/leonardo/Projects/Surgiplot/surgiplot/core/io/loaders.py).
+Surgiplot supports several input classes through the loaders in [loaders.py](../surgiplot/core/io/loaders.py).
 
 ### 3.1 Navigation exports
 
@@ -143,7 +143,7 @@ Surgiplot’s metric implementations are not black boxes. Each metric family is 
 
 ### 4.1 PCA best-fit plane
 
-Several metrics require projecting a 3D polygon into a 2D local plane before area-related computations can be performed. This is handled in [pca_plane.py](/Users/leonardo/Projects/Surgiplot/surgiplot/core/geometry/pca_plane.py).
+Several metrics require projecting a 3D polygon into a 2D local plane before area-related computations can be performed. This is handled in [pca_plane.py](../surgiplot/core/geometry/pca_plane.py).
 
 Method:
 
@@ -177,7 +177,7 @@ Whenever a planar polygon area must be computed after PCA projection, Surgiplot 
 
 ## 5.1 Distance in 3D
 
-Implemented in [distance_3d.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/distance_3d.py).
+Implemented in [distance_3d.py](../surgiplot/metrics/distance_3d.py).
 
 Inputs:
 
@@ -197,7 +197,7 @@ Interpretation:
 
 ## 5.2 Area in 3D
 
-Implemented in [area_3d.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/area_3d.py).
+Implemented in [area_3d.py](../surgiplot/metrics/area_3d.py).
 
 Inputs:
 
@@ -216,7 +216,7 @@ Interpretation:
 
 ## 5.3 Volume in 3D
 
-Implemented in [volume_3d.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/volume_3d.py).
+Implemented in [volume_3d.py](../surgiplot/metrics/volume_3d.py).
 
 Inputs:
 
@@ -237,9 +237,9 @@ Interpretation:
 - more expressive than a convex hull when the alpha-shape succeeds
 - still transparent because the fallback behavior is explicit
 
-## 5.4 AoE: Angle of exposure
+## 5.4 AoE: Angle of Exposure
 
-Implemented in [aoe.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/aoe.py).
+Implemented in [aoe.py](../surgiplot/metrics/aoe.py).
 
 Inputs:
 
@@ -267,14 +267,20 @@ Interpretation:
 - point-based exposure angle
 - useful for directional or aperture-style geometric assessment around a pivot
 
+Scope limitation:
+
+- the software returns the principal included angle in `[0°, 180°]`
+- it does not recover a reflex angle and is not the complete vectorial circular AoE protocol
+- manuscripts must describe this exact three-point implementation unless a separate validated protocol is used
+
 ## 5.5 AoA and SF
 
-Implemented in [aoa_sf.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/aoa_sf.py).
+Implemented in [aoa_sf.py](../surgiplot/metrics/aoa_sf.py).
 
 This family combines:
 
 - `AoA` — Angle of Attack
-- `SF` — surgical freedom
+- `SF` — Surgical Freedom
 
 The code uses a pragmatic anatomical convention:
 
@@ -321,13 +327,13 @@ Interpretation:
 
 ## 5.6 VOM, sVOM, and VoA
 
-Implemented in [vom_voa.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/vom_voa.py).
+Implemented in [vom_voa.py](../surgiplot/metrics/vom_voa.py).
 
 This family combines:
 
 - `VoA` — Visuo-operative Angle
 - `VOM` — Volume of Operative Maneuverability
-- `sVOM` — standardized VOM
+- `sVOM` — standardized Volume of Operative Maneuverability
 
 The implementation is explicitly documented in the code as a supplementary ellipse-based method.
 
@@ -347,12 +353,12 @@ This creates a smooth geometric solid that is still tied to the measured polygon
 1. `entry` and `target` polygons are resolved as 3D point sets
 2. each polygon is projected into its PCA plane
 3. the polygon area is computed using the shoelace formula
-4. an area-matched ellipse is fitted while preserving the PCA-derived aspect ratio
+4. an area-matched ellipse is fitted using the coordinate-extent ratio along the two SVD in-plane axes
 5. the ellipse is reconstructed in 3D
 6. the centroids of entry and target are linked into a corridor axis
 7. intermediate elliptical rings are interpolated between target and entry
 8. the stack of rings is triangulated into a closed 3D mesh
-9. the enclosed mesh volume is computed
+9. the enclosed mesh volume is computed after translating mesh vertices to a local centroid reference for numerical stability
 
 This yields `VOM`.
 
@@ -386,7 +392,7 @@ The code explicitly avoids applying an arbitrary tilt-based multiplicative volum
 
 ## 6. Python Library Usage
 
-The main scientific API is exposed from [api.py](/Users/leonardo/Projects/Surgiplot/surgiplot/api.py).
+The main scientific API is exposed from [api.py](../surgiplot/api.py).
 
 ### 6.1 Loading data
 
@@ -407,7 +413,7 @@ ds = sp.from_points(
         [0.0, 0.0, 10.0],
     ],
     names=["cranial", "caudal", "medial", "pivot"],
-    source="research",
+    source="database",
 )
 ```
 
@@ -589,7 +595,7 @@ The GUI is most useful when the study begins from visual anatomy rather than fro
 Launch with:
 
 ```bash
-surgiplot_gui
+surgiplot-gui
 ```
 
 ## 8.1 Tabular dataset workflow
@@ -775,7 +781,7 @@ print(sp.__version__)
 
 The following paragraph can be adapted for manuscripts or internal protocols:
 
-> Surgiplot is a local coordinate-based analysis framework for neurosurgical anatomical research. Heterogeneous point sources, including neuronavigation exports, normalized tabular landmark datasets, and landmarks acquired directly on rendered 3D models, are converted into a common dataset abstraction containing explicit 3D coordinates and semantic labels. Operative metrics are computed from transparent geometric procedures, including Euclidean distance, PCA-plane polygon area, sparse-point enclosed volume, angle-of-exposure, angle-of-attack and surgical-freedom constructs, and an ellipse-based visuo-operative corridor model yielding VoA, VOM, and standardized VOM. The same dataset can be processed interactively in the GUI or reproducibly through Python and CLI workflows.
+> Surgiplot is a local coordinate-based analysis framework for neurosurgical anatomical research. Heterogeneous point sources, including neuronavigation exports, normalized tabular landmark datasets, and landmarks acquired directly on rendered 3D models, are converted into a common dataset abstraction containing explicit 3D coordinates and semantic labels. Operative metrics are computed from transparent geometric procedures, including Euclidean distance, SVD-plane polygon area, sparse-point enclosed volume, principal three-point Angle of Exposure, Angle of Attack and Surgical Freedom constructs, and an ellipse-based visuo-operative corridor model yielding VoA, VOM, and sVOM. The same dataset can be processed interactively in the standalone GUI or reproducibly through Python and CLI workflows.
 
 ## 12. Scope and Boundaries
 
@@ -795,14 +801,14 @@ Its current 3D tooling should be understood as:
 
 ## 13. Related Repository References
 
-- project overview: [README](/Users/leonardo/Projects/Surgiplot/README.md)
-- public API: [api.py](/Users/leonardo/Projects/Surgiplot/surgiplot/api.py)
-- dataset model: [dataset.py](/Users/leonardo/Projects/Surgiplot/surgiplot/core/dataset.py)
-- VOM / VoA / sVOM implementation: [vom_voa.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/vom_voa.py)
-- AoA / SF implementation: [aoa_sf.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/aoa_sf.py)
-- AoE implementation: [aoe.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/aoe.py)
-- 3D area implementation: [area_3d.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/area_3d.py)
-- 3D volume implementation: [volume_3d.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/volume_3d.py)
-- CLI: [app.py](/Users/leonardo/Projects/Surgiplot/surgiplot/cli/app.py)
-- GUI: [app.py](/Users/leonardo/Projects/Surgiplot/surgiplot/gui/app.py)
-- 3D scene workflow: [scene_reconstruction.py](/Users/leonardo/Projects/Surgiplot/surgiplot/ai/scene_reconstruction.py)
+- project overview: [README](../README.md)
+- public API: [api.py](../surgiplot/api.py)
+- dataset model: [dataset.py](../surgiplot/core/dataset.py)
+- VOM / sVOM / VoA implementation: [vom_voa.py](../surgiplot/metrics/vom_voa.py)
+- AoA / SF implementation: [aoa_sf.py](../surgiplot/metrics/aoa_sf.py)
+- AoE implementation: [aoe.py](../surgiplot/metrics/aoe.py)
+- 3D area implementation: [area_3d.py](../surgiplot/metrics/area_3d.py)
+- 3D volume implementation: [volume_3d.py](../surgiplot/metrics/volume_3d.py)
+- CLI: [app.py](../surgiplot/cli/app.py)
+- GUI: [app.py](../surgiplot/gui/app.py)
+- 3D scene workflow: [scene_reconstruction.py](../surgiplot/ai/scene_reconstruction.py)

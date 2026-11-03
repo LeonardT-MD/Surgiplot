@@ -107,8 +107,20 @@ data/
 datasets/
 *.csv
 *.tsv
+*.xls
+*.xlsx
 *.h5
 *.hdf5
+
+# CLINICAL IMAGING / SLICER SCENES
+*.dcm
+*.nii
+*.nii.gz
+*.nrrd
+*.mha
+*.mhd
+*.mrb
+*.mrml
 
 ##############################
 # GUI / QT
@@ -126,3 +138,17 @@ datasets/
 *.bak
 *.tmp
 *.temp
+
+##############################
+# SEPARATE / LOCAL WORKSPACES
+##############################
+/SurgiplotAI/
+/checkpoints/
+/extensions/SurgiplotToolkit/
+/SurgiplotToolkit_standalone_work.py
+/TMP_TOOLKIT_DOCUMENTATION_INDEX.md
+/README_TRASFERIMENTO_LOCALE_FELLOWS.md
+/docs/SURGIPLOT_TOOLKIT_*.md
+/docs/SURGIPLOT_PERFORMANCE_MAINTENANCE.md
+/docs/Surgiplot_Master_Thesis_Methods.docx
+/docs/SURGIPLOT_DOCUMENTATION_PACKAGE.zip

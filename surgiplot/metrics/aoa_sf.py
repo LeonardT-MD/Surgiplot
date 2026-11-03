@@ -165,10 +165,15 @@ class AOASFResult:
 
 def _resolve_points(data, spec: PointSpec) -> np.ndarray:
     if data is not None:
-        return data.resolve_points(spec)
-    arr = np.asarray(spec, dtype=float)
-    if arr.ndim == 1:
-        arr = arr.reshape(1, 3)
+        arr = np.asarray(data.resolve_points(spec), dtype=float)
+    else:
+        arr = np.asarray(spec, dtype=float)
+        if arr.ndim == 1:
+            arr = arr.reshape(1, 3)
+    if arr.ndim != 2 or arr.shape[1] != 3:
+        raise ValueError("Point specification must resolve to an (N,3) array.")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("Point coordinates must be finite.")
     return arr
 
 
@@ -182,7 +187,11 @@ def _resolve_point(data, spec: Union[str, Iterable[float], np.ndarray]) -> np.nd
 def _angle_deg(u, v) -> float:
     u = np.asarray(u, dtype=float)
     v = np.asarray(v, dtype=float)
-    den = float(np.linalg.norm(u) * np.linalg.norm(v) + 1e-12)
+    u_norm = float(np.linalg.norm(u))
+    v_norm = float(np.linalg.norm(v))
+    if u_norm <= 1e-12 or v_norm <= 1e-12:
+        raise ValueError("Cannot compute an angle from a zero-length vector.")
+    den = u_norm * v_norm
     cosang = float(np.dot(u, v) / den)
     cosang = max(-1.0, min(1.0, cosang))
     return float(np.degrees(np.arccos(cosang)))
@@ -244,7 +253,7 @@ def AOA_SF(
     space: str = "native",
     transforms=None,
     return_debug: bool = False,
-    sf_rescale_radius_mm: Optional[float] = None,  # NEW: rescale distance from pivot for SF + AoA triangles (geometry-only)
+    sf_rescale_radius_mm: Optional[float] = None,
 ) -> AOASFResult:
     """
     AoA + SF (entry-area) with optional rescaling about the pivot.
@@ -258,7 +267,8 @@ def AOA_SF(
       - Horizontal AoA: triangle (medial, lateral, pivot)
 
     SF:
-      - Entry SF area: polygon area of (cranial, caudal, medial, lateral) projected to best-fit plane.
+      - Entry SF area: the non-crossing perimeter
+        (cranial, lateral, caudal, medial) projected to a best-fit plane.
       - Rescaled entry SF area: same, but with the 4 entry points projected to a fixed radius from pivot.
 
     """
@@ -266,63 +276,51 @@ def AOA_SF(
         raise ValueError("Provide entry and target/pivot.")
 
     E = _resolve_points(data, entry)
-    if E.shape[0] < 2:
-        raise ValueError("Entry must contain at least 2 points.")
+    if E.shape[0] != 4:
+        raise ValueError(
+            "AoA/SF requires exactly four entry points in this order: "
+            "cranial, caudal, medial, lateral."
+        )
+    if np.unique(E, axis=0).shape[0] != 4:
+        raise ValueError("AoA/SF entry roles must reference four distinct points.")
     T = _resolve_point(data, target)
-    vertical_triangle = None
-    horizontal_triangle = None
+    if np.any(np.linalg.norm(E - T, axis=1) <= 1e-12):
+        raise ValueError("The AoA/SF pivot must be distinct from every entry point.")
+
     vertical_triangle_rescaled = None
     horizontal_triangle_rescaled = None
-    sf_surface_3d = None
     sf_surface_rescaled_3d = None
 
-    # Expect 4 entry points for the new AoA/SF convention, but keep generic support:
-    # If 4+ points: use first 2 for V-AoA endpoints, last 2 for H-AoA endpoints (best for GUI)
-    if E.shape[0] < 4:
-        # fall back to centroid-based approach for AoA if user passes generic polygon
-        cE = E.mean(axis=0)
-        d = T - cE
-        d_xy = np.array([d[0], d[1], 0.0])
-        d_yz = np.array([0.0, d[1], d[2]])
-        aoa_h = 0.0 if np.linalg.norm(d_xy) < 1e-12 else _angle_deg(d_xy, np.array([0.0, 1.0, 0.0]))
-        aoa_v = 0.0 if np.linalg.norm(d_yz) < 1e-12 else _angle_deg(d_yz, np.array([0.0, 0.0, 1.0]))
-        sf_entry_area = 0.0
-        sf_entry_area_rescaled = 0.0
-        q2 = None
-    else:
-        # interpret entry as [cranial, caudal, medial, lateral] (GUI order)
-        p_cran = E[0]
-        p_caud = E[1]
-        p_med = E[2]
-        p_lat = E[3]
+    # Entry order is a public API contract: cranial, caudal, medial, lateral.
+    p_cran, p_caud, p_med, p_lat = E
 
-        vertical_triangle = _triangle_debug(p_cran, p_caud, T)
-        horizontal_triangle = _triangle_debug(p_med, p_lat, T)
-        aoa_v = float(vertical_triangle["angles_deg"]["gamma"])
-        aoa_h = float(horizontal_triangle["angles_deg"]["gamma"])
+    vertical_triangle = _triangle_debug(p_cran, p_caud, T)
+    horizontal_triangle = _triangle_debug(p_med, p_lat, T)
+    aoa_v = float(vertical_triangle["angles_deg"]["gamma"])
+    aoa_h = float(horizontal_triangle["angles_deg"]["gamma"])
 
-        # SF surface uses the anatomical non-crossing order:
-        # cranial -> lateral -> caudal -> medial
-        entry_quad_ordered = np.vstack([p_cran, p_lat, p_caud, p_med])
-        sf_surface_3d, sf_entry_area = _coplanar_polygon(entry_quad_ordered)
+    # SF uses the non-crossing anatomical perimeter order.
+    entry_quad_ordered = np.vstack([p_cran, p_lat, p_caud, p_med])
+    sf_surface_3d, sf_entry_area = _coplanar_polygon(entry_quad_ordered)
+    if sf_entry_area <= np.finfo(float).eps:
+        raise ValueError("AoA/SF entry points define a degenerate surgical-freedom surface.")
 
-        sf_entry_area_rescaled = 0.0
-        q2 = None
-        sf_surface_rescaled_3d = None
-        if sf_rescale_radius_mm is not None:
-            r = float(sf_rescale_radius_mm)
-            if r <= 0:
-                raise ValueError("sf_rescale_radius_mm must be > 0")
-            q2 = np.vstack([
-                _project_to_fixed_radius(p_cran, T, r),
-                _project_to_fixed_radius(p_caud, T, r),
-                _project_to_fixed_radius(p_med,  T, r),
-                _project_to_fixed_radius(p_lat,  T, r),
-            ])
-            vertical_triangle_rescaled = _triangle_debug(q2[0], q2[1], T)
-            horizontal_triangle_rescaled = _triangle_debug(q2[2], q2[3], T)
-            rescaled_quad_ordered = np.vstack([q2[0], q2[3], q2[1], q2[2]])
-            sf_surface_rescaled_3d, sf_entry_area_rescaled = _coplanar_polygon(rescaled_quad_ordered)
+    sf_entry_area_rescaled = 0.0
+    q2 = None
+    if sf_rescale_radius_mm is not None:
+        r = float(sf_rescale_radius_mm)
+        if not np.isfinite(r) or r <= 0:
+            raise ValueError("sf_rescale_radius_mm must be a finite value > 0")
+        q2 = np.vstack([
+            _project_to_fixed_radius(p_cran, T, r),
+            _project_to_fixed_radius(p_caud, T, r),
+            _project_to_fixed_radius(p_med, T, r),
+            _project_to_fixed_radius(p_lat, T, r),
+        ])
+        vertical_triangle_rescaled = _triangle_debug(q2[0], q2[1], T)
+        horizontal_triangle_rescaled = _triangle_debug(q2[2], q2[3], T)
+        rescaled_quad_ordered = np.vstack([q2[0], q2[3], q2[1], q2[2]])
+        sf_surface_rescaled_3d, sf_entry_area_rescaled = _coplanar_polygon(rescaled_quad_ordered)
 
     dbg = None
     if return_debug:
@@ -335,13 +333,13 @@ def AOA_SF(
             "sf_rescale_radius_mm": sf_rescale_radius_mm,
             "entry_quad_area_mm2": sf_entry_area,
             "standardized_entry_quad_area_mm2": sf_entry_area_rescaled,
-            "sf_surface_vertex_order": ["cranial", "lateral", "caudal", "medial"] if E.shape[0] >= 4 else None,
+            "sf_surface_vertex_order": ["cranial", "lateral", "caudal", "medial"],
             "sf_surface_3d": sf_surface_3d,
             "sf_surface_rescaled_3d": sf_surface_rescaled_3d,
-            "vertical_triangle": vertical_triangle["points"] if E.shape[0] >= 4 else None,
-            "horizontal_triangle": horizontal_triangle["points"] if E.shape[0] >= 4 else None,
-            "vertical_triangle_properties": vertical_triangle if E.shape[0] >= 4 else None,
-            "horizontal_triangle_properties": horizontal_triangle if E.shape[0] >= 4 else None,
+            "vertical_triangle": vertical_triangle["points"],
+            "horizontal_triangle": horizontal_triangle["points"],
+            "vertical_triangle_properties": vertical_triangle,
+            "horizontal_triangle_properties": horizontal_triangle,
             "vertical_triangle_rescaled": vertical_triangle_rescaled["points"] if vertical_triangle_rescaled is not None else None,
             "horizontal_triangle_rescaled": horizontal_triangle_rescaled["points"] if horizontal_triangle_rescaled is not None else None,
             "vertical_triangle_rescaled_properties": vertical_triangle_rescaled,

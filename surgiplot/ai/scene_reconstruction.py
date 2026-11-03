@@ -1583,7 +1583,6 @@ class AISceneReconstructionDialog(QtWidgets.QDialog):
         if self._merged_xyz_m is None:
             return
         face_count = len(self._surface_triangles_mm) if self._surface_triangles_mm is not None else 0
-        render_target = "textured surface" if self._prefer_textured_surface else "imaging cloud"
         display_face_limit = int(self._reconstruction_meta.get("display_face_limit", 0) or 0)
         display_note = ""
         if self._prefer_textured_surface and display_face_limit > 0:

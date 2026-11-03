@@ -8,7 +8,7 @@ The emphasis here is on four questions:
 
 1. what Surgiplot is trying to formalize
 2. how each method is actually computed
-3. how the same computational core is exposed across the Python library, CLI, GUI, and Slicer extension
+3. how the standalone core is exposed through Python, CLI, and GUI, and how its documented contract relates to the separately released Slicer extension
 4. what caveats should be reported or kept in mind during scientific use
 
 ## 1. General project architecture
@@ -20,20 +20,19 @@ Surgiplot is built around the idea that anatomical and operative measurements ca
 - `metric computation`
 - `visualization and reporting`
 
-The same computation core is used by four front ends:
+The standalone repository uses one computation core for three front ends:
 
 - the Python API
 - the CLI
 - the desktop GUI
-- the `SurgiplotToolkit` extension for 3D Slicer
 
-This is methodologically important. If two different user interfaces yielded different metric definitions, the project would not support reproducible analysis. The software has therefore been developed so that the front ends differ in ergonomics, not in the numerical implementation of the metric kernels.
+`SurgiplotToolkit` is a companion 3D Slicer extension maintained in a separate repository. It may vendor a reviewed snapshot of the metric code for compatibility with Slicer's Python runtime. Numerical equivalence must therefore be established by version matching and regression tests rather than assumed from the product name. Within this standalone repository, Python, CLI, and GUI differ in ergonomics, not in their numerical metric kernels.
 
 ## 2. Data model
 
 ### 2.1 Dataset abstraction
 
-The common container is the `Dataset` object in [dataset.py](/Users/leonardo/Projects/Surgiplot/surgiplot/core/dataset.py).
+The common container is the `Dataset` object in [dataset.py](../surgiplot/core/dataset.py).
 
 It stores:
 
@@ -95,7 +94,7 @@ It is used directly in `Distance`, in axis lengths, in radius projection, and in
 
 ### 3.2 SVD-based best-fit plane
 
-Area-related constructs are handled through a best-fit plane estimated by singular value decomposition in [pca_plane.py](/Users/leonardo/Projects/Surgiplot/surgiplot/core/geometry/pca_plane.py).
+Area-related constructs are handled through a best-fit plane estimated by singular value decomposition in [pca_plane.py](../surgiplot/core/geometry/pca_plane.py).
 
 Given a point cloud \(P_i\):
 
@@ -135,7 +134,7 @@ This is an explicit geometric reparameterization rather than an empirical normal
 
 ### 4.1 DISTANCE_3D
 
-Implemented in [distance_3d.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/distance_3d.py).
+Implemented in [distance_3d.py](../surgiplot/metrics/distance_3d.py).
 
 Inputs:
 
@@ -154,7 +153,7 @@ Caveat:
 
 ### 4.2 AREA_3D
 
-Implemented in [area_3d.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/area_3d.py).
+Implemented in [area_3d.py](../surgiplot/metrics/area_3d.py).
 
 Inputs:
 
@@ -177,7 +176,7 @@ Caveat:
 
 ### 4.3 VOLUME_3D
 
-Implemented in [volume_3d.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/volume_3d.py).
+Implemented in [volume_3d.py](../surgiplot/metrics/volume_3d.py).
 
 Inputs:
 
@@ -201,7 +200,7 @@ Caveat:
 
 ### 4.4 AOE
 
-Implemented in [aoe.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/aoe.py).
+Implemented in [aoe.py](../surgiplot/metrics/aoe.py).
 
 Inputs:
 
@@ -221,13 +220,14 @@ Interpretation:
 
 - included angle at `B`
 
-Caveat:
+Caveats:
 
-- this is a direct geometric angle, not a broader solid-angle construct
+- this is the principal three-point included angle in `[0°, 180°]`
+- it does not reconstruct reflex angles and must not be described as the complete vectorial circular AoE protocol
 
 ### 4.5 AOA_SF
 
-Implemented in [aoa_sf.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/aoa_sf.py).
+Implemented in [aoa_sf.py](../surgiplot/metrics/aoa_sf.py).
 
 Inputs:
 
@@ -254,7 +254,7 @@ Caveats:
 
 ### 4.6 VOM_VOA
 
-Implemented in [vom_voa.py](/Users/leonardo/Projects/Surgiplot/surgiplot/metrics/vom_voa.py).
+Implemented in [vom_voa.py](../surgiplot/metrics/vom_voa.py).
 
 Inputs:
 
@@ -274,9 +274,9 @@ Method summary:
 
 1. fit best-fit planes to entry and target polygons
 2. compute polygon areas
-3. fit area-matched ellipses preserving PCA-derived anisotropy
+3. fit area-matched ellipses using the SVD-axis extent ratio
 4. connect the ellipses to form a frustum-like corridor shell
-5. compute full corridor volume
+5. compute full corridor volume from a capped triangulated loft in a centroid-shifted local numerical frame
 6. define a distal cut ellipse at standard distance for `sVOM`
 7. compute the distal truncated volume
 8. compute `VoA` from corridor direction relative to the target plane
@@ -369,7 +369,7 @@ That design later influenced the Slicer extension directly.
 
 ## 8. 3D Slicer layer
 
-`SurgiplotToolkit` extends the same logic into a Slicer-native environment. It is not merely another GUI wrapper. Its distinct value lies in multimodal scene context.
+`SurgiplotToolkit` applies the same documented metric concepts in a Slicer-native environment. It is a separately versioned companion application, not a fourth runtime front end of the installed standalone package. Its distinct value lies in multimodal scene context.
 
 The extension brings together:
 
@@ -390,7 +390,7 @@ The project now produces two parallel output types:
 
 These are study-ready tables in which:
 
-- each patient occupies one row
+- each pseudonymized study subject occupies one row
 - each target-specific measurement family contributes additional columns
 
 This is suitable for direct statistical work or later manuscript table preparation.
@@ -424,7 +424,7 @@ These store the actual points used, their labels, their grouping, and the associ
 
 ## 11. Why the project is structured this way
 
-The key methodological strength of Surgiplot is not that it computes a large number of quantities. The strength is that the same quantities can be computed consistently across several modes of use:
+The key methodological strength of Surgiplot is not that it computes a large number of quantities. The strength is that the same quantities can be computed consistently across standalone modes of use and explicitly compared across the companion boundary:
 
 - scripted Python analysis
 - command-line batch execution
@@ -448,8 +448,8 @@ When the manuscript is written, the following points are worth preserving.
 2. `The metric families are inspectable`
    Each metric corresponds to a documented geometric procedure, not an undocumented viewer tool.
 
-3. `The same computation core is reused across all interfaces`
-   Numerical consistency across Python, CLI, GUI, and 3D Slicer is a major design feature.
+3. `Standalone interfaces reuse one computation core`
+   Numerical consistency across Python, CLI, and GUI is guaranteed by shared functions. Slicer equivalence is versioned and tested across the companion repository boundary.
 
 4. `Standardized constructs are explicit`
    Standardized SF and sVOM are not vague normalized values; they are defined by declared geometric transformations and distances.

@@ -1,14 +1,19 @@
 from __future__ import annotations
 import numpy as np
 
+
 def apply_affine(points: np.ndarray, affine: np.ndarray) -> np.ndarray:
     """Apply 4x4 affine to (N,3) points."""
     pts = np.asarray(points, dtype=float)
     if pts.ndim == 1:
-        pts = pts.reshape(1,3)
+        pts = pts.reshape(1, 3)
+    if pts.ndim != 2 or pts.shape[1] != 3:
+        raise ValueError("points must have shape (3,) or (N,3)")
     A = np.asarray(affine, dtype=float)
-    if A.shape != (4,4):
+    if A.shape != (4, 4):
         raise ValueError("affine must be 4x4")
-    homog = np.c_[pts, np.ones((pts.shape[0],1))]
+    if not np.all(np.isfinite(pts)) or not np.all(np.isfinite(A)):
+        raise ValueError("points and affine must contain only finite values")
+    homog = np.c_[pts, np.ones((pts.shape[0], 1))]
     out = (homog @ A.T)[:, :3]
     return out

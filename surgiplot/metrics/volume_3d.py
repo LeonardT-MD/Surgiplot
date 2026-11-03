@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Optional, Any, Dict
 
 import numpy as np
-from scipy.spatial import Delaunay, ConvexHull, cKDTree
+from scipy.spatial import Delaunay, ConvexHull, QhullError, cKDTree
 
 
 @dataclass
@@ -67,6 +67,10 @@ def _resolve_cloud(data, spec) -> np.ndarray:
         raise ValueError("Point cloud must be an (N,3) array-like.")
     if pts.shape[0] < 4:
         raise ValueError("Need at least 4 non-coplanar points to estimate a volume.")
+    if not np.all(np.isfinite(pts)):
+        raise ValueError("Point-cloud coordinates must be finite.")
+    if np.unique(pts, axis=0).shape[0] < 4:
+        raise ValueError("Need at least 4 distinct points to estimate a volume.")
     return pts
 
 
@@ -78,16 +82,14 @@ def _tetra_volume(tet: np.ndarray) -> float:
 def _circumsphere_radius(tet: np.ndarray) -> float:
     tet = np.asarray(tet, dtype=float)
     a = tet[0]
-    M = 2.0 * np.vstack([tet[1] - a, tet[2] - a, tet[3] - a])
-    rhs = np.array([
-        np.dot(tet[1], tet[1]) - np.dot(a, a),
-        np.dot(tet[2], tet[2]) - np.dot(a, a),
-        np.dot(tet[3], tet[3]) - np.dot(a, a),
-    ], dtype=float)
-    if abs(np.linalg.det(M)) < 1e-12:
+    edges = np.vstack([tet[1] - a, tet[2] - a, tet[3] - a])
+    matrix = 2.0 * edges
+    rhs = np.einsum("ij,ij->i", edges, edges)
+    condition = float(np.linalg.cond(matrix))
+    if not np.isfinite(condition) or condition > 1e12:
         return float("inf")
-    center = np.linalg.solve(M, rhs)
-    return float(np.linalg.norm(center - a))
+    center_offset = np.linalg.solve(matrix, rhs)
+    return float(np.linalg.norm(center_offset))
 
 
 def _tetra_connectivity(selected_tets: np.ndarray) -> int:
@@ -155,9 +157,11 @@ def _boundary_triangles_from_tets(points: np.ndarray, selected_tets: np.ndarray)
 
 
 def _auto_alpha_shape(points: np.ndarray) -> Dict[str, Any]:
-    delaunay = Delaunay(points, qhull_options="QJ")
+    reference = np.asarray(points, dtype=float).mean(axis=0)
+    local_points = np.asarray(points, dtype=float) - reference
+    delaunay = Delaunay(local_points, qhull_options="QJ")
     simplices = np.asarray(delaunay.simplices, dtype=int)
-    tetra_points = points[simplices]
+    tetra_points = local_points[simplices]
     tetra_volumes = np.asarray([_tetra_volume(tet) for tet in tetra_points], dtype=float)
     circumradii = np.asarray([_circumsphere_radius(tet) for tet in tetra_points], dtype=float)
 
@@ -165,7 +169,7 @@ def _auto_alpha_shape(points: np.ndarray) -> Dict[str, Any]:
     if not np.any(finite):
         raise ValueError("Automatic alpha-shape reconstruction failed: degenerate tetrahedralization.")
 
-    tree = cKDTree(points)
+    tree = cKDTree(local_points)
     k = min(4, len(points))
     dists, _ = tree.query(points, k=k)
     if dists.ndim == 1:
@@ -217,7 +221,8 @@ def _auto_alpha_shape(points: np.ndarray) -> Dict[str, Any]:
 
 
 def _convex_hull_reconstruction(points: np.ndarray) -> Dict[str, Any]:
-    hull = ConvexHull(points)
+    local_points = np.asarray(points, dtype=float) - np.asarray(points, dtype=float).mean(axis=0)
+    hull = ConvexHull(local_points)
     faces = np.asarray([points[simplex] for simplex in hull.simplices], dtype=float)
     return {
         "alpha_mm": None,
@@ -257,7 +262,7 @@ def VOLUME_3D(
         alpha_result = _auto_alpha_shape(P)
         result = alpha_result
         reconstruction_method = "alpha_shape_auto"
-    except Exception:
+    except (ValueError, QhullError, np.linalg.LinAlgError, FloatingPointError):
         result = convex
 
     dbg = None

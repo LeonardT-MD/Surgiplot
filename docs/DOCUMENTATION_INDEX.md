@@ -1,30 +1,50 @@
 # Surgiplot Documentation Index
 
-This index separates the documentation that belongs to the core `Surgiplot` repository from the material that belongs more naturally to the companion `SurgiplotToolkit` Slicer extension.
+This index covers the standalone Python, command-line, and desktop Surgiplot software. Documentation for the 3D Slicer extension is maintained in the separate [SurgiplotToolkit repository](https://github.com/LeonardT-MD/SurgiplotToolkit).
 
-## Core Surgiplot documents
+## Start here
 
-These documents describe the computation core, Python API, CLI workflows, desktop GUI, and the broader methodological rationale of the project.
+| Reader | Recommended path |
+|---|---|
+| New user | [README](../README.md) → [Installation](INSTALLATION.md) → [CLI Reference](CLI_REFERENCE.md) or [GUI Guide](GUI_GUIDE.md) |
+| Python user | [Installation](INSTALLATION.md) → [Data Formats](DATA_FORMATS.md) → [Python API](PYTHON_API.md) |
+| Researcher defining a protocol | [Metric Reference](METRICS_REFERENCE.md) → [Validation](VALIDATION.md) → [Publication Guide](SURGIPLOT_PUBLICATION_GUIDE.md) |
+| Software reviewer | [Architecture](ARCHITECTURE.md) → [Metric Reference](METRICS_REFERENCE.md) → [Development](DEVELOPMENT.md) |
+| Data-governance reviewer | [Security and Privacy](SECURITY_AND_PRIVACY.md) → [Data Formats](DATA_FORMATS.md) |
 
-- [SURGIPLOT_PUBLICATION_GUIDE.md](/Users/leonardo/Projects/Surgiplot/docs/SURGIPLOT_PUBLICATION_GUIDE.md)
-  Comprehensive publication-oriented guide to the Surgiplot framework.
+## Operational documentation
 
-- [SURGIPLOT_ECOSYSTEM_METHODS_SUMMARY.md](/Users/leonardo/Projects/Surgiplot/docs/SURGIPLOT_ECOSYSTEM_METHODS_SUMMARY.md)
-  Technical synthesis of the full ecosystem across Python, CLI, GUI, and 3D Slicer integration.
+- [Installation and Deployment](INSTALLATION.md) — core, GUI, rendered-scene, Conda, platform, upgrade, and uninstall procedures.
+- [Data Formats and Coordinate Semantics](DATA_FORMATS.md) — normalized schemas, vendor imports, aliases, coordinate systems, units, and round trips.
+- [CLI Reference](CLI_REFERENCE.md) — every command, option family, range syntax, JSON output, and automation pattern.
+- [Python API](PYTHON_API.md) — dataset construction, metric calls, result dataclasses, debug geometry, provenance, and examples.
+- [Desktop GUI Guide](GUI_GUIDE.md) — dataset curation, rendered-scene acquisition, plotting, and failure recovery.
 
-- [SURGIPLOT_MANUSCRIPT_METHODS_DRAFT.md](/Users/leonardo/Projects/Surgiplot/docs/SURGIPLOT_MANUSCRIPT_METHODS_DRAFT.md)
-  Manuscript-style methods draft suitable for later adaptation into a paper.
+## Technical and scientific documentation
 
-- [SURGIPLOT_SUPPLEMENTARY_METHODS.md](/Users/leonardo/Projects/Surgiplot/docs/SURGIPLOT_SUPPLEMENTARY_METHODS.md)
-  Supplementary methods note describing implementation choices and methodological details.
+- [Architecture and Execution Model](ARCHITECTURE.md) — package boundaries, dependency graph, execution paths, and optional components.
+- [Metric Reference](METRICS_REFERENCE.md) — exact inputs, formulas, result fields, validation rules, invariants, and limitations.
+- [Validation and Quality Assurance](VALIDATION.md) — automated tests, analytical fixtures, tolerances, and release acceptance criteria.
+- [Development and Release Guide](DEVELOPMENT.md) — local setup, style, tests, packaging, Git hygiene, and release sequence.
+- [Security, Privacy, and Data Governance](SECURITY_AND_PRIVACY.md) — local processing model, PHI exclusions, repository scanning, and incident response.
+- [Changelog](../CHANGELOG.md) — release-specific corrections, additions, and compatibility notes.
+- [Citation metadata](../CITATION.cff) — software author, version, release date, and repository citation record.
 
-- [SURGIPLOT_TECHNICAL_IMPLEMENTATION_NOTE.md](/Users/leonardo/Projects/Surgiplot/docs/SURGIPLOT_TECHNICAL_IMPLEMENTATION_NOTE.md)
-  Reviewer-oriented technical note on the computational design and metric definitions.
+## Methods and publication material
 
-## Slicer-specific material
+- [Extended Publication Guide](SURGIPLOT_PUBLICATION_GUIDE.md) — end-to-end research workflow and reporting recommendations.
+- [Ecosystem Methods Summary](SURGIPLOT_ECOSYSTEM_METHODS_SUMMARY.md) — mathematical and interface summary.
+- [Supplementary Methods](SURGIPLOT_SUPPLEMENTARY_METHODS.md) — concise implementation-oriented methods text.
+- [Manuscript Methods Draft](SURGIPLOT_MANUSCRIPT_METHODS_DRAFT.md) — editable manuscript-language starting point.
+- [Technical Implementation Note](SURGIPLOT_TECHNICAL_IMPLEMENTATION_NOTE.md) — reviewer-oriented implementation summary.
 
-The following document was developed during the evolution of the `SurgiplotToolkit` extension:
+## Source-of-truth hierarchy
 
-- [SURGIPLOT_TOOLKIT_3DSLICER_GUIDE.md](/Users/leonardo/Projects/Surgiplot/docs/SURGIPLOT_TOOLKIT_3DSLICER_GUIDE.md)
+When descriptions differ, use this order:
 
-For public-facing use, however, the preferred home of Slicer-specific documentation is the separate `SurgiplotToolkit` repository, so that installation guidance, workflow descriptions, and scene-specific caveats remain aligned with the actual extension code and release state.
+1. tagged source code and automated tests for the installed release;
+2. [Metric Reference](METRICS_REFERENCE.md) for the explicit software contract;
+3. [Data Formats](DATA_FORMATS.md), [Python API](PYTHON_API.md), and [CLI Reference](CLI_REFERENCE.md) for interface behavior;
+4. publication-oriented narrative documents.
+
+Scientific papers provide the methodological context and canonical names of published metrics. They do not automatically imply that every software implementation detail is identical to every historical protocol. Release-specific deviations and simplifications must be stated in study methods.

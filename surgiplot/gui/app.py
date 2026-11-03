@@ -21,7 +21,6 @@ import json
 import os
 import sys
 import traceback
-from pathlib import Path
 from typing import Dict, Optional, Any, List
 import re
 
@@ -798,7 +797,7 @@ class PlotPanel(QtWidgets.QWidget):
         try:
             if scene_type == "dataset":
                 self._render_dataset_scene(scene)
-            elif scene_type == "metric" and metric == "VOM / VoA":
+            elif scene_type == "metric" and metric in {"VOM / VoA", "VOM / sVOM / VoA"}:
                 self._render_vom_scene(title, payload, scene.get("scene_meta", {}))
             elif scene_type == "metric" and metric == "AoA / SF":
                 self._render_aoa_scene(title, payload, scene.get("scene_meta", {}))
@@ -1055,8 +1054,6 @@ class PlotPanel(QtWidgets.QWidget):
         has_cloud = cloud_xyz.ndim == 2 and cloud_xyz.shape[1] == 3 and len(cloud_xyz) > 0
         has_surface = surface_triangles.ndim == 3 and surface_triangles.shape[1:] == (3, 3) and len(surface_triangles) > 0
         has_textured_surface = isinstance(surface_texture_payload, dict)
-        show_points = has_cloud
-        show_surface = has_surface or has_textured_surface
         if self._viewer_mode == "pyvista" and self.pv_plotter is not None:
             background_actors: List[Any] = []
             if has_textured_surface:
@@ -2418,7 +2415,7 @@ class MetricPanel(QtWidgets.QWidget):
         self.plot_panel = plot_panel
 
         self.cmb_metric = QtWidgets.QComboBox()
-        self.cmb_metric.addItems(["AoA / SF", "VOM / VoA", "AoE", "Distance", "Area", "Volume", "Dataset overview"])
+        self.cmb_metric.addItems(["AoA / SF", "VOM / sVOM / VoA", "AoE", "Distance", "Area", "Volume", "Dataset overview"])
 
         self.btn_compute = QtWidgets.QPushButton("Compute")
         self.btn_plot_points = QtWidgets.QPushButton("Plot Dataset")
@@ -2450,19 +2447,19 @@ class MetricPanel(QtWidgets.QWidget):
         self.cmb_pivot = self._make_point_combo()
         self.btn_toggle_standardization = QtWidgets.QPushButton("Standardization")
         self.btn_toggle_standardization.setCheckable(True)
-        self.spin_sf_radius_cm = QtWidgets.QDoubleSpinBox()
-        self.spin_sf_radius_cm.setRange(0.01, 1000.0)
-        self.spin_sf_radius_cm.setDecimals(2)
-        self.spin_sf_radius_cm.setValue(20.00)
-        self.spin_sf_radius_cm.setSuffix(" cm")
-        self.spin_sf_radius_cm.hide()
+        self.spin_sf_radius_mm = QtWidgets.QDoubleSpinBox()
+        self.spin_sf_radius_mm.setRange(0.1, 10000.0)
+        self.spin_sf_radius_mm.setDecimals(2)
+        self.spin_sf_radius_mm.setValue(20.00)
+        self.spin_sf_radius_mm.setSuffix(" mm")
+        self.spin_sf_radius_mm.hide()
         aoa_layout.addRow("Cranial:", self._point_field_widget(self.cmb_cranial))
         aoa_layout.addRow("Caudal:", self._point_field_widget(self.cmb_caudal))
         aoa_layout.addRow("Medial:", self._point_field_widget(self.cmb_medial))
         aoa_layout.addRow("Lateral:", self._point_field_widget(self.cmb_lateral))
         aoa_layout.addRow("Pivot:", self._point_field_widget(self.cmb_pivot))
         aoa_layout.addRow("Standardization:", self.btn_toggle_standardization)
-        aoa_layout.addRow("Distance:", self.spin_sf_radius_cm)
+        aoa_layout.addRow("Radius:", self.spin_sf_radius_mm)
         self.metric_form_indexes["AoA / SF"] = self.metric_forms.addWidget(self.form_aoa)
 
         self.form_vom = QtWidgets.QWidget()
@@ -2481,7 +2478,7 @@ class MetricPanel(QtWidgets.QWidget):
         vom_layout.addRow("Entry Polygon:", self._name_list_field_widget(self.edit_vom_entry))
         vom_layout.addRow("Target Polygon:", self._name_list_field_widget(self.edit_vom_target))
         vom_layout.addRow("Standard Distance:", self.spin_stand_dist)
-        self.metric_form_indexes["VOM / VoA"] = self.metric_forms.addWidget(self.form_vom)
+        self.metric_form_indexes["VOM / sVOM / VoA"] = self.metric_forms.addWidget(self.form_vom)
 
         self.form_aoe = QtWidgets.QWidget()
         aoe_layout = QtWidgets.QFormLayout(self.form_aoe)
@@ -2625,7 +2622,7 @@ class MetricPanel(QtWidgets.QWidget):
     def _sync_standardization_state(self):
         enabled = bool(self.btn_toggle_standardization.isChecked())
         self.btn_toggle_standardization.setText("Standardization ON" if enabled else "Standardization")
-        self.spin_sf_radius_cm.setVisible(enabled)
+        self.spin_sf_radius_mm.setVisible(enabled)
 
     def _ds(self):
         return self.dataset_panel.ds
@@ -2710,7 +2707,7 @@ class MetricPanel(QtWidgets.QWidget):
                 )
                 return
 
-            if metric_name == "VOM / VoA":
+            if metric_name == "VOM / sVOM / VoA":
                 entry_names = self._parse_name_list(self.edit_vom_entry, minimum=3)
                 target_names = self._parse_name_list(self.edit_vom_target, minimum=3)
                 result = VOM_VOA(
@@ -2723,7 +2720,7 @@ class MetricPanel(QtWidgets.QWidget):
                 self._show_result("VOM_VOA", result)
                 self.plot_panel.plot_metric_result(
                     result,
-                    title="VOM / VoA",
+                    title="VOM / sVOM / VoA",
                     scene_meta={
                         "entry_names": entry_names,
                         "target_names": target_names,
@@ -2848,7 +2845,7 @@ class MetricPanel(QtWidgets.QWidget):
     def _aoa_standardization_radius_mm(self) -> Optional[float]:
         if not self.btn_toggle_standardization.isChecked():
             return None
-        return float(self.spin_sf_radius_cm.value()) * 10.0
+        return float(self.spin_sf_radius_mm.value())
 
     def _show_result(self, title: str, result: Any):
         payload = asdict(result) if is_dataclass(result) else result
@@ -2864,12 +2861,12 @@ class MetricPanel(QtWidgets.QWidget):
             return f"{title}\n\n{repr(payload)}"
 
         title_map = {
-            "AOA_SF": "AoA / SF",
-            "VOM_VOA": "VoA / VOM / sVOM",
-            "AOE": "AoE · Angle of Exposure",
+            "AOA_SF": "AoA / SF · Angle of Attack / Surgical Freedom",
+            "VOM_VOA": "VOM / sVOM / VoA",
+            "AOE": "AoE · Principal Angle of Exposure",
             "DISTANCE_3D": "3D Distance",
-            "AREA_3D": "AE · Area of Exposure",
-            "VOLUME_3D": "Volume",
+            "AREA_3D": "3D Polygon Area",
+            "VOLUME_3D": "Sparse-Point Volume",
         }
         heading = title_map.get(title, title.replace("_", " "))
 
@@ -2883,13 +2880,13 @@ class MetricPanel(QtWidgets.QWidget):
                 f"- Surgical freedom area: {float(payload.get('sf_entry_area_mm2', 0.0)):.2f} mm^2",
             ]
             if payload.get("rescale_radius_mm") is not None:
-                lines.append(f"- Standardization distance: {float(payload['rescale_radius_mm']) / 10.0:.2f} cm")
+                lines.append(f"- Standardization radius: {float(payload['rescale_radius_mm']):.2f} mm")
                 lines.append(f"- Standardized surgical freedom area: {float(payload.get('sf_entry_area_rescaled_mm2', 0.0)):.2f} mm^2")
             lines.extend([
                 "",
                 "Interpretation",
                 "Attack angles are measured at the selected pivot point.",
-                "Surgical freedom is reported as the PCA-fitted coplanar quadrilateral area.",
+                "Surgical Freedom is reported as the SVD best-fit-plane quadrilateral area.",
             ])
             return "\n".join(lines)
 
@@ -2898,7 +2895,7 @@ class MetricPanel(QtWidgets.QWidget):
                 heading,
                 "",
                 "Primary Measurements",
-                f"- VoA (Visuooperative Angle): {float(payload.get('voa_deg', 0.0)):.2f} deg",
+                f"- VoA (Visuo-operative Angle): {float(payload.get('voa_deg', 0.0)):.2f} deg",
                 f"- VOM (Volume of Operative Maneuverability): {float(payload.get('vom_mm3', 0.0)):.2f} mm^3",
                 f"- sVOM (standardized VOM): {float(payload.get('svom_mm3', 0.0)):.2f} mm^3",
                 "",
@@ -2914,7 +2911,8 @@ class MetricPanel(QtWidgets.QWidget):
                 f"- AoE (Angle of Exposure): {float(payload.get('aoe_deg', 0.0)):.2f} deg",
                 "",
                 "Interpretation",
-                "The angle is measured at the selected pivot between the two input rays.",
+                "The principal angle is measured at the selected pivot between the two input rays.",
+                "This three-point result is bounded to 0-180 deg and is not a reflex-angle reconstruction.",
             ])
 
         if title == "DISTANCE_3D":
@@ -2930,7 +2928,7 @@ class MetricPanel(QtWidgets.QWidget):
                 heading,
                 "",
                 "Primary Measurement",
-                f"- AE (Area of Exposure): {float(payload.get('area_mm2', 0.0)):.2f} mm^2",
+                f"- Best-fit-plane polygon area: {float(payload.get('area_mm2', 0.0)):.2f} mm^2",
                 "",
                 "Method",
                 "The polygon is projected to its PCA best-fit plane and measured in 2D using the shoelace formula.",
@@ -3492,7 +3490,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "- Import navigation files (Stryker / Medtronic)\n"
             "- Import formatted databases\n"
             "- Import generic point files into an existing dataset\n"
-            "- Compute AoA/SF, VOM/VoA, AoE, Distance, Area\n"
+            "- Compute AoA/SF, VOM/sVOM/VoA, AoE, Distance, Area, and Volume\n"
             "- Optional imported 3D scene workspace (if installed)\n"
         )
         QtWidgets.QMessageBox.information(self, "About Surgiplot", msg)

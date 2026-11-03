@@ -8,184 +8,300 @@
 
 # Surgiplot
 
-Surgiplot is a coordinate-based morphometric framework for neurosurgical anatomical analysis. The repository contains the shared computation core together with the Python API, the command-line interface, and the desktop GUI for dataset curation, rendered-scene landmark acquisition, and interactive analysis.
+Surgiplot is a coordinate-native research software package for quantitative neurosurgical anatomy. It converts named three-dimensional landmarks into inspectable morphometric constructs through one shared Python computation core, exposed through a command-line interface and a desktop graphical interface.
 
-The guiding principle is explicit geometry. Once anatomical landmarks are represented as 3D coordinates in a common frame, operative metrics should be derived from inspectable geometric procedures rather than opaque viewer state.
+The software is designed for reproducible anatomical research. It is not a medical device, does not provide clinical recommendations, and has not been validated for autonomous diagnosis, treatment selection, or intraoperative navigation.
 
 ## Repository scope
 
-This repository is the primary home of:
+This repository contains the standalone Surgiplot software:
 
-- the `surgiplot` Python package
-- the CLI for scripted and batch workflows
-- the desktop GUI for tabular and rendered-scene analysis
-- the shared metric and geometry core used by all interfaces
-- the project’s publication-oriented methods documentation
+- the `surgiplot` Python package;
+- dataset normalization and neuronavigation import;
+- the public Python API;
+- the `surgiplot` command-line interface;
+- the `surgiplot-gui` desktop application;
+- optional rendered-scene landmark acquisition;
+- metric, provenance, comparison, and repeatability logic;
+- automated numerical and I/O regression tests;
+- technical, user, and publication documentation.
 
-The `3D Slicer` extension is now conceptually a companion project:
+The 3D Slicer integration is maintained separately as [SurgiplotToolkit](https://github.com/LeonardT-MD/SurgiplotToolkit). Segmentation models and model weights are not part of this repository.
 
-- `SurgiplotToolkit`
+## Metric nomenclature
 
-An incubator copy may still exist in this repository for coordinated development, but the long-term public-facing distinction is:
+The following names are used consistently in code and documentation:
 
-- `Surgiplot`: computation core, Python, CLI, desktop GUI
-- `SurgiplotToolkit`: scene-native `3D Slicer` integration
+| Identifier | Name | Primary output |
+|---|---|---:|
+| `DISTANCE_3D` | three-dimensional Euclidean distance | mm |
+| `AREA_3D` | best-fit-plane polygon area | mm² |
+| `VOLUME_3D` | sparse-point enclosed-volume estimate | mm³ |
+| `AOE` / AoE | principal included Angle of Exposure | degrees |
+| `AOA_SF` / AoA | Angle of Attack | degrees |
+| `AOA_SF` / SF | Surgical Freedom | mm² |
+| `VOM_VOA` / VOM | Volume of Operative Maneuverability | mm³ |
+| `VOM_VOA` / sVOM | standardized Volume of Operative Maneuverability | mm³ |
+| `VOM_VOA` / VoA | Visuo-operative Angle | degrees |
 
-## Supported metric families
+The software’s three-point AoE implementation returns the principal angle in `[0°, 180°]`. It must not be represented as a reflex-angle or full circular Angle of Exposure method. The exact mathematical contract for every metric is documented in [Metric Reference](docs/METRICS_REFERENCE.md).
 
-The computation core currently supports:
+## Architecture
 
-- `Distance`
-- `Area`
-- `Volume`
-- `AoE`
-- `AoA / SF`
-- `VOM / sVOM / VoA`
+```text
+input file or numeric coordinates
+             │
+             ▼
+       Dataset normalization
+   names · aliases · metadata · provenance
+             │
+             ▼
+      shared metric functions
+ distance · area · volume · AoE · AoA/SF · VOM/sVOM/VoA
+             │
+       ┌─────┴──────────┐
+       ▼                ▼
+ Python API        CLI / desktop GUI
+       │                │
+       └──────┬─────────┘
+              ▼
+ scalar results · debug geometry · normalized datasets · study tables
+```
 
-The same metric logic can be applied to landmarks originating from:
+All interfaces call the same functions under `surgiplot/metrics`. The GUI is an acquisition and visualization layer; it does not contain a second numerical implementation.
 
-- normalized tabular datasets
-- neuronavigation exports
-- generic point lists
-- manually assembled coordinate arrays
-- landmarks collected interactively on imported 3D scenes
+## Requirements
+
+- Python 3.10 or newer;
+- a supported desktop operating system for the optional GUI;
+- no network connection for ordinary metric computation;
+- input coordinates expressed in one consistent spatial frame.
+
+Coordinate units are not inferred from values. The software reports `mm`, `mm²`, and `mm³` under the explicit assumption that input coordinates are in millimeters.
 
 ## Installation
 
-### Core package
+### Core, Python API, and CLI
 
 ```bash
-pip install -e .
+git clone https://github.com/LeonardT-MD/Surgiplot.git
+cd Surgiplot
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install .
 ```
 
-### With rendered-scene support
+### Desktop GUI
 
 ```bash
-pip install -e .[scene3d]
+python -m pip install '.[gui]'
+surgiplot-gui
 ```
 
-### Main entry points
+The legacy command name `surgiplot_gui` remains available.
+
+### GUI with PyVista/VTK rendered-scene support
 
 ```bash
-surgiplot
+python -m pip install '.[scene3d]'
+surgiplot-gui
+```
+
+### Conda-assisted installation
+
+Run from the cloned repository root:
+
+```bash
+bash surgiplot/scripts/install_conda.sh surgiplot
+conda activate surgiplot
 surgiplot version
-surgiplot_gui
 ```
 
-## Project architecture
+Alternatively, from the repository root:
 
-Surgiplot is organized around four layers:
+```bash
+conda env create -f surgiplot/env/surgiplot_master.yml
+conda activate surgiplot
+```
 
-1. `coordinate acquisition`
-2. `dataset normalization`
-3. `metric computation`
-4. `visualization and export`
+See [Installation and Deployment](docs/INSTALLATION.md) for platform notes, editable development installs, troubleshooting, and uninstall instructions.
 
-All user-facing layers call the same computation core. This is critical methodologically, because it keeps Python scripts, CLI pipelines, GUI work, and Slicer integration numerically aligned.
+## Installation verification
 
-## Python and CLI use
+```bash
+surgiplot version
+surgiplot --help
+python -c "import surgiplot; print(surgiplot.__version__)"
+```
 
-The canonical data object is the `Dataset`, which stores:
+Expected version for this release line: `0.2.0`.
 
-- stable internal point identifiers
-- optional anatomical labels and aliases
-- dataset metadata
+Developers should additionally run:
 
-Two complementary scripting styles are supported.
+```bash
+python -m pytest
+ruff check surgiplot tests
+```
 
-### Module-level style
+## Input data
+
+Surgiplot accepts:
+
+- normalized CSV, TSV, XLSX, and Surgiplot JSON datasets;
+- Stryker annotation-point text exports;
+- Medtronic JSON annotations and plans;
+- generic text point lists;
+- arrays supplied directly through Python;
+- landmarks committed from the optional rendered-scene workspace.
+
+A normalized delimited table uses these required columns:
+
+```text
+name,x,y,z
+cranial,12.5,-4.2,31.0
+caudal,12.1,-9.8,29.7
+```
+
+An optional `labels` column contains comma-separated aliases. JSON, CSV, and TSV exports are loadable again, preserving the point dataset’s public semantics. Full schemas and vendor behavior are documented in [Data Formats and Coordinate Semantics](docs/DATA_FORMATS.md).
+
+Do not commit patient datasets, DICOM studies, scene files, screenshots containing identifiers, or derived tables containing protected health information.
+
+## CLI quick start
+
+Inspect a dataset:
+
+```bash
+surgiplot dataset summary points.csv
+surgiplot dataset labels points.csv
+surgiplot dataset export points.csv normalized.json
+```
+
+Compute a distance:
+
+```bash
+surgiplot metric distance points.csv --A point_1 --B point_2
+```
+
+Compute polygon area with compact range syntax:
+
+```bash
+surgiplot metric area points.csv --polygon point_1-4
+```
+
+Compute Angle of Attack and Surgical Freedom:
+
+```bash
+surgiplot metric aoa-sf points.csv \
+  --cranial cranial \
+  --caudal caudal \
+  --medial medial \
+  --lateral lateral \
+  --pivot target \
+  --sf-rescale-radius-mm 10
+```
+
+Compute VOM, sVOM, and VoA:
+
+```bash
+surgiplot metric vom-voa points.csv \
+  --entry entry_1-4 \
+  --target target_1-4 \
+  --stand-dist 10
+```
+
+Metric commands emit JSON to standard output so results can be redirected or parsed by another program. See the complete [CLI Reference](docs/CLI_REFERENCE.md).
+
+## Python quick start
 
 ```python
 import surgiplot as sp
 
-ds = sp.load("case.csv", source="database")
-result = sp.VOM(data=ds, entry="point_1-4", target="point_10-13", stand_dist=10.0)
+dataset = sp.load("points.csv", kind="database")
+
+distance = sp.DISTANCE_3D(data=dataset, A="point_1", B="point_2")
+area = dataset.AREA_3D(polygon="point_1-4")
+
+aoa_sf = sp.AOA_SF(
+    data=dataset,
+    entry=["cranial", "caudal", "medial", "lateral"],
+    target="pivot",
+    sf_rescale_radius_mm=10.0,
+    return_debug=True,
+)
+
+corridor = sp.VOM_VOA(
+    data=dataset,
+    entry="entry_1-4",
+    target="target_1-4",
+    stand_dist=10.0,
+    return_debug=True,
+)
 ```
 
-### Dataset-bound style
+Metric functions return dataclasses with typed scalar fields and an optional `debug` dictionary containing the geometry used for verification and plotting. See [Python API](docs/PYTHON_API.md).
 
-```python
-import surgiplot as sp
+## Numerical behavior and validation
 
-ds = sp.load("case.csv", source="database")
-result = ds.VOM(entry="point_1-4", target="point_10-13", stand_dist=10.0)
-```
+The release tests cover:
 
-The CLI mirrors the same metric families for reproducible shell-based workflows and supports compact multi-point range syntax such as:
+- known analytical distance, area, angle, tetrahedral volume, SF, VOM, and sVOM fixtures;
+- rigid-translation invariance, including coordinates offset by millions of units;
+- rejection of non-finite, duplicate, collinear, zero-length, and role-incomplete geometry;
+- normalized JSON/CSV/TSV round trips;
+- Stryker and Medtronic parser detection;
+- CLI JSON output and point-range expansion;
+- repeatability statistics and non-finite-value filtering.
 
-- `point_1-9`
-- `point_1:9`
-- `1-9`
+The VOM mesh-volume calculation is evaluated in a local numerical frame to avoid origin-dependent cancellation. Polygon metrics require explicit vertex order. Sparse volume reconstruction reports either `alpha_shape_auto` or `convex_hull` in debug output; downstream analyses should retain this method field.
 
-## Desktop GUI use
+See [Validation and Quality Assurance](docs/VALIDATION.md) for test fixtures, tolerances, known limitations, and the release checklist.
 
-The desktop GUI is intended for:
+## Provenance and repeatability
 
-- interactive dataset inspection and relabeling
-- point collection on imported rendered 3D scenes
-- scale calibration when raw models are not already expressed in meaningful physical units
-- post-hoc metric computation from a persistent landmark dataset
+The study layer records:
 
-The GUI is not a separate numerical system. It is an acquisition and visualization layer for the same underlying coordinate model.
+- subject and anatomical target;
+- acquisition modality;
+- operator and session;
+- source context and reference anatomy;
+- metric family and flattened result fields;
+- UTC creation time.
+
+`comparison_rows` produces analysis-ready rows. `repeatability_rows` groups records by subject, target, and metric family, then reports replicate count, mean, population standard deviation, coefficient of variation, minimum, and maximum for every finite numeric result field.
 
 ## Documentation
 
-Core documentation for this repository is listed in:
+Start with the [Documentation Index](docs/DOCUMENTATION_INDEX.md). The main technical documents are:
 
-- [docs/DOCUMENTATION_INDEX.md](/Users/leonardo/Projects/Surgiplot/docs/DOCUMENTATION_INDEX.md)
+- [Installation and Deployment](docs/INSTALLATION.md)
+- [Architecture and Execution Model](docs/ARCHITECTURE.md)
+- [Data Formats and Coordinate Semantics](docs/DATA_FORMATS.md)
+- [Metric Reference](docs/METRICS_REFERENCE.md)
+- [Python API](docs/PYTHON_API.md)
+- [CLI Reference](docs/CLI_REFERENCE.md)
+- [Desktop GUI Guide](docs/GUI_GUIDE.md)
+- [Validation and Quality Assurance](docs/VALIDATION.md)
+- [Security, Privacy, and Data Governance](docs/SECURITY_AND_PRIVACY.md)
+- [Development and Release Guide](docs/DEVELOPMENT.md)
+- [Publication Guide](docs/SURGIPLOT_PUBLICATION_GUIDE.md)
 
-The most important documents are:
+## Scientific references
 
-- [docs/SURGIPLOT_PUBLICATION_GUIDE.md](/Users/leonardo/Projects/Surgiplot/docs/SURGIPLOT_PUBLICATION_GUIDE.md)
-- [docs/SURGIPLOT_ECOSYSTEM_METHODS_SUMMARY.md](/Users/leonardo/Projects/Surgiplot/docs/SURGIPLOT_ECOSYSTEM_METHODS_SUMMARY.md)
-- [docs/SURGIPLOT_MANUSCRIPT_METHODS_DRAFT.md](/Users/leonardo/Projects/Surgiplot/docs/SURGIPLOT_MANUSCRIPT_METHODS_DRAFT.md)
-- [docs/SURGIPLOT_SUPPLEMENTARY_METHODS.md](/Users/leonardo/Projects/Surgiplot/docs/SURGIPLOT_SUPPLEMENTARY_METHODS.md)
-- [docs/SURGIPLOT_TECHNICAL_IMPLEMENTATION_NOTE.md](/Users/leonardo/Projects/Surgiplot/docs/SURGIPLOT_TECHNICAL_IMPLEMENTATION_NOTE.md)
+The nomenclature and clinical-research context of the corridor metrics are described in:
 
-For the `3D Slicer` extension specifically, the corresponding public documentation should live in the separate `SurgiplotToolkit` repository.
+- Tariciotti L, et al. *Volume of Operative Maneuverability as a New Measurement in Neuroanatomical Research*. World Neurosurgery. 2025. [PMID 39952396](https://pubmed.ncbi.nlm.nih.gov/39952396/), [DOI 10.1016/j.wneu.2025.123761](https://doi.org/10.1016/j.wneu.2025.123761).
+- Tariciotti L, et al. *The visuo-operative angle: computational 3D assessment of surgical trajectories toward irregular target areas in skull base corridors*. Journal of Neurosurgery. 2026. [PMID 41791114](https://pubmed.ncbi.nlm.nih.gov/41791114/), [DOI 10.3171/2025.9.JNS251518](https://doi.org/10.3171/2025.9.JNS251518).
+- Porto E, et al. *The vectorial technique: a novel neuronavigation-based tool to measure angles of exposure during skull base dissections*. Journal of Neurosurgery. 2024. [PMID 38364224](https://pubmed.ncbi.nlm.nih.gov/38364224/), [DOI 10.3171/2023.12.JNS232709](https://doi.org/10.3171/2023.12.JNS232709).
 
-## Scientific orientation
+These publications provide scientific context. The software contract is the implementation and version-specific documentation in this repository; any methodological deviation or simplification must be reported explicitly.
 
-Surgiplot is intended for anatomically explicit and reproducible quantitative work. The framework is best suited for studies in which:
+## Citation
 
-- landmarks can be defined meaningfully in 3D
-- derived geometric constructs should remain inspectable
-- the same analyses must be repeatable across interactive and scripted environments
-- scalar outputs alone are insufficient without retained point-level provenance
+GitHub can generate citation metadata from [`CITATION.cff`](CITATION.cff). Cite the exact Surgiplot version or commit used, together with the publication for each metric whose scientific method is being applied. Software and publication citations serve different purposes: the former identifies the implementation; the latter identifies the scientific method and context.
 
-The project therefore emphasizes:
+## Authorship and contributions
 
-- transparent mathematics
-- stable dataset semantics
-- interface-independent metric definitions
-- explicit reproducibility of the landmarks used to generate each reported result
+Surgiplot was created by Leonardo Tariciotti. Additional contributors should be credited through the Git history and release notes.
 
-## Provenance, comparison, and repeatability
-
-The current `Surgiplot` core now also includes a first study-level layer for:
-
-- acquisition provenance
-- metric-run registration
-- cross-modality comparison tables
-- repeatability summaries across repeated runs
-
-These capabilities are exposed most concretely in `SurgiplotToolkit`, but the underlying data model now exists in the shared core as well through:
-
-- [surgiplot/core/studies.py](/Users/leonardo/Projects/Surgiplot/surgiplot/core/studies.py)
-
-The intent is methodological rather than cosmetic. A reported metric should be traceable not only to a point set, but also to:
-
-- `subject_id`
-- `anatomical_target`
-- `acquisition_modality`
-- `operator`
-- `session_id`
-- interface context
-
-This allows the same metric family to be compared across:
-
-- different acquisition modalities
-- different observers
-- repeated sessions
-
-while preserving a stable run registry suitable for later statistical analysis.
+No explicit software license has yet been added to this repository. Until a license is selected, default copyright restrictions apply; public redistribution and reuse terms are therefore not granted automatically.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+
 def best_fit_plane_pca(points: np.ndarray):
     """Return centroid and normal vector of best-fit plane via PCA.
 
@@ -11,9 +12,15 @@ def best_fit_plane_pca(points: np.ndarray):
     pts = np.asarray(points, dtype=float)
     if pts.ndim != 2 or pts.shape[1] != 3 or pts.shape[0] < 3:
         raise ValueError("points must be (N,3) with N>=3")
+    if not np.all(np.isfinite(pts)):
+        raise ValueError("points must contain only finite coordinates")
+    if np.unique(pts, axis=0).shape[0] < 3:
+        raise ValueError("at least three distinct points are required")
 
     c = pts.mean(axis=0)
     X = pts - c
+    if np.linalg.matrix_rank(X) < 2:
+        raise ValueError("points are collinear; a stable plane cannot be estimated")
 
     # Use NumPy SVD instead of sklearn PCA so the geometry core remains lightweight
     # and importable in runtimes such as 3D Slicer.
@@ -23,8 +30,12 @@ def best_fit_plane_pca(points: np.ndarray):
     basis = vh.T  # columns
     normal = basis[:, 2]
     # normalize
-    normal = normal / (np.linalg.norm(normal) + 1e-12)
+    normal_norm = float(np.linalg.norm(normal))
+    if normal_norm <= np.finfo(float).eps:
+        raise ValueError("best-fit plane normal is numerically degenerate")
+    normal = normal / normal_norm
     return c, normal, basis
+
 
 def project_to_plane_2d(points: np.ndarray):
     """Project 3D points to 2D in best-fit PCA plane and return (pts2, centroid, basis)."""

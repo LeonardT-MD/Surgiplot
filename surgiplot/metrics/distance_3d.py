@@ -31,10 +31,17 @@ def _resolve_point(data, spec) -> np.ndarray:
     if data is not None:
         # string name/label supported
         if isinstance(spec, str):
-            return data.get(spec).reshape(3,)
+            point = data.get(spec).reshape(3,)
+            if not np.all(np.isfinite(point)):
+                raise ValueError("Point coordinates must be finite.")
+            return point
         # numeric
-        return np.asarray(spec, dtype=float).reshape(3,)
-    return np.asarray(spec, dtype=float).reshape(3,)
+        point = np.asarray(spec, dtype=float).reshape(3,)
+    else:
+        point = np.asarray(spec, dtype=float).reshape(3,)
+    if not np.all(np.isfinite(point)):
+        raise ValueError("Point coordinates must be finite.")
+    return point
 
 
 def DISTANCE_3D(

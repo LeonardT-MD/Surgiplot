@@ -1,0 +1,19 @@
+include README.md
+include CHANGELOG.md
+include CITATION.cff
+include pyproject.toml
+
+recursive-include docs *.md *.png
+exclude docs/SURGIPLOT_TOOLKIT_*.md
+exclude docs/SURGIPLOT_PERFORMANCE_MAINTENANCE.md
+
+recursive-include surgiplot *.py *.yml *.sh
+recursive-include tests *.py
+
+prune SurgiplotAI
+prune checkpoints
+prune extensions
+
+global-exclude .DS_Store
+global-exclude __pycache__
+global-exclude *.py[cod]

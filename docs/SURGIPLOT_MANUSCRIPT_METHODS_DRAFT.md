@@ -2,7 +2,7 @@
 
 ## Surgiplot framework for coordinate-based morphometric analysis
 
-Morphometric analyses were performed with `Surgiplot`, a local coordinate-based analysis framework developed for neurosurgical anatomical and skull-base research. The framework was designed to preserve numerical consistency across four operational layers: a Python library, a command-line interface, a desktop graphical user interface, and a 3D Slicer extension (`SurgiplotToolkit`). Across all front ends, metric computations were performed by the same shared computation core.
+Morphometric analyses were performed with `Surgiplot`, a local coordinate-based analysis framework developed for neurosurgical anatomical and skull-base research. Within the standalone release, the Python library, command-line interface, and desktop graphical interface call the same computation core. `SurgiplotToolkit` is a separately versioned companion extension for 3D Slicer; any cross-application comparison should report both revisions and verify numerical equivalence.
 
 The general workflow consisted of four stages: coordinate acquisition, dataset normalization, metric computation, and result export. Landmark coordinates were obtained either from tabular/navigation-derived datasets or by direct point placement on rendered three-dimensional scenes. All landmarks were converted into a common `Dataset` representation, in which each point was stored as a 3D coordinate together with a stable canonical identifier and optional semantic aliases. This structure allowed the same coordinate set to be addressed by internal point names or by anatomical labels.
 
@@ -34,15 +34,15 @@ and reported in millimeters.
 
 ### AoE
 
-`AoE` was defined as the included angle at a pivot point \(B\) between rays \(BA\) and \(BC\):
+`AoE` was defined as the principal included angle at a pivot point \(B\) between rays \(BA\) and \(BC\):
 
 \[
 \mathrm{AoE} = \cos^{-1}\left(\frac{(A-B)\cdot(C-B)}{\|A-B\|\|C-B\|}\right)
 \]
 
-and reported in degrees.
+and reported in degrees. The value was bounded to \([0^\circ,180^\circ]\). This three-point implementation did not reconstruct reflex angles and was not treated as the complete vectorial circular AoE protocol.
 
-### AoA and surgical freedom
+### AoA and Surgical Freedom
 
 The `AoA / SF` family used four anatomically ordered entry landmarks (`cranial`, `caudal`, `medial`, `lateral`) together with a pivot. Vertical and horizontal `AoA` were computed from pivot-based angular constructs defined by the corresponding cardinal limits. `Surgical freedom` (`SF`) was defined as the area of the quadrilateral delimited by the four entry points after projection to the best-fit plane of the entry set.
 
@@ -56,7 +56,7 @@ and the area of the rescaled quadrilateral was then recomputed. Native and stand
 
 ### VOM, sVOM, and VoA
 
-The `VOM / sVOM / VoA` family modeled the operative corridor between an entry polygon and a target polygon. Each polygon was projected into its best-fit plane and replaced by an area-matched ellipse that preserved the PCA-derived anisotropy of the original polygon while matching its area. A frustum-like shell was then generated between entry and target ellipses to define `VOM`. A distal cut at a predefined standard distance from the target defined the standardized corridor segment (`sVOM`).
+The `VOM / sVOM / VoA` family modeled the operative corridor between an entry polygon and a target polygon. Each polygon was projected into its best-fit plane and replaced by an area-matched ellipse whose aspect ratio was derived from coordinate extents along the SVD in-plane axes. A closed loft was generated between target and entry ellipses to define `VOM`. A distal cut at a predefined standard distance from the target defined the standardized corridor segment (`sVOM`). Closed-mesh volume was evaluated in a centroid-shifted local numerical frame to reduce cancellation at large global coordinate offsets.
 
 `VoA` was computed from the corridor direction relative to the target plane. Specifically, the acute angle between the corridor vector and the target-plane normal was computed first, and the angle to the plane was then defined as:
 

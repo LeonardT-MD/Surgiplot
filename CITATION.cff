@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use Surgiplot, cite the software release and the relevant metric publications."
+type: software
+title: "Surgiplot"
+abstract: "Coordinate-native research software for reproducible quantitative neurosurgical anatomy."
+authors:
+  - family-names: "Tariciotti"
+    given-names: "Leonardo"
+version: "0.2.0"
+date-released: "2026-11-03"
+repository-code: "https://github.com/LeonardT-MD/Surgiplot"
+url: "https://github.com/LeonardT-MD/Surgiplot"
+keywords:
+  - neurosurgery
+  - neuroanatomy
+  - morphometry
+  - neuronavigation
+  - computational geometry
+preferred-citation:
+  type: software
+  authors:
+    - family-names: "Tariciotti"
+      given-names: "Leonardo"
+  title: "Surgiplot"
+  version: "0.2.0"
+  date-released: "2026-11-03"
+  repository-code: "https://github.com/LeonardT-MD/Surgiplot"

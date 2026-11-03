@@ -21,7 +21,7 @@ def is_stryker_annotation_text(text: str) -> bool:
     return (
         "point=" in text
         and "name=" in text
-        and bool(_STRYKER_BLOCK_RE.search(text))
+        and any(_STRYKER_BLOCK_RE.match(line.strip()) for line in text.splitlines())
     )
 
 

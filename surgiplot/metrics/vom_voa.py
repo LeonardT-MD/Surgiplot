@@ -148,6 +148,10 @@ def _as_poly(data, spec) -> np.ndarray:
     arr = np.asarray(arr, dtype=float)
     if arr.ndim != 2 or arr.shape[1] != 3 or arr.shape[0] < 3:
         raise ValueError("Polygon must be an (N,3) array with N>=3.")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("Polygon coordinates must be finite.")
+    if np.unique(arr, axis=0).shape[0] < 3:
+        raise ValueError("Polygon requires at least three distinct points.")
     return arr
 
 
@@ -158,7 +162,11 @@ def _centroid(poly3d: np.ndarray) -> np.ndarray:
 def _angle_deg(u: np.ndarray, v: np.ndarray) -> float:
     u = np.asarray(u, dtype=float).reshape(3,)
     v = np.asarray(v, dtype=float).reshape(3,)
-    den = float(np.linalg.norm(u) * np.linalg.norm(v) + 1e-12)
+    u_norm = float(np.linalg.norm(u))
+    v_norm = float(np.linalg.norm(v))
+    if u_norm <= 1e-12 or v_norm <= 1e-12:
+        raise ValueError("Cannot compute an angle from a zero-length vector.")
+    den = u_norm * v_norm
     cosang = float(np.dot(u, v) / den)
     cosang = max(-1.0, min(1.0, cosang))
     return float(np.degrees(np.arccos(cosang)))
@@ -191,12 +199,15 @@ def _polygon_normal(points: np.ndarray) -> np.ndarray:
 def _fit_area_matched_ellipse(poly3d: np.ndarray, n_samples: int = 120) -> Dict[str, Any]:
     pts2, centroid, basis = project_to_plane_2d(poly3d)
     area_polygon = float(shoelace_area(pts2))
+    scale = max(float(np.ptp(pts2, axis=0).max()), 1.0)
+    if area_polygon <= np.finfo(float).eps * scale * scale * 100.0:
+        raise ValueError("Polygon is degenerate or its vertex order produces zero area.")
 
     spread = np.max(np.abs(pts2), axis=0)
     spread = np.where(spread > 1e-9, spread, np.std(pts2, axis=0))
     spread = np.where(spread > 1e-9, spread, 1.0)
 
-    # Preserve the PCA-derived aspect ratio and scale uniformly so that
+    # Preserve the SVD-axis extent ratio and scale uniformly so that
     # the fitted ellipse area matches the polygon area.
     uniform_scale = float(np.sqrt(max(area_polygon, 1e-12) / (np.pi * spread[0] * spread[1])))
     a = float(uniform_scale * spread[0])
@@ -293,8 +304,9 @@ def _build_side_faces(ring0: np.ndarray, ring1: np.ndarray) -> list[list[np.ndar
         B = B[:n]
 
     faces: list[list[np.ndarray]] = []
-    for i in range(n - 1):
-        faces.append([A[i], A[i + 1], B[i + 1], B[i]])
+    for i in range(n):
+        j = (i + 1) % n
+        faces.append([A[i], A[j], B[j], B[i]])
     return faces
 
 
@@ -383,9 +395,17 @@ def _triangulate_ring_stack(rings: list[np.ndarray]) -> list[np.ndarray]:
 
 
 def _mesh_volume(triangles: list[np.ndarray]) -> float:
+    """Return a closed triangle mesh volume in a local numerical frame.
+
+    Subtracting a reference point makes the signed-tetrahedron sum stable and
+    translation invariant even for navigation coordinates far from the origin.
+    """
+    if not triangles:
+        return 0.0
+    reference = np.vstack([np.asarray(tri, dtype=float) for tri in triangles]).mean(axis=0)
     vol = 0.0
     for tri in triangles:
-        a, b, c = np.asarray(tri, dtype=float)
+        a, b, c = np.asarray(tri, dtype=float) - reference
         vol += np.dot(a, np.cross(b, c)) / 6.0
     return float(abs(vol))
 
@@ -493,10 +513,10 @@ def VOM_VOA(
     full_rings = _loft_ring_stack(target_fit, entry_fit, ratio_end=1.0, n_sections=72)
     vom = _mesh_volume(_triangulate_ring_stack(full_rings))
 
-    sd = float(stand_dist)
-    if sd <= 0:
-        raise ValueError("stand_dist must be > 0")
-    sd = min(sd, H)
+    requested_sd = float(stand_dist)
+    if not np.isfinite(requested_sd) or requested_sd <= 0:
+        raise ValueError("stand_dist must be a finite value > 0")
+    sd = min(requested_sd, H)
     cut_ratio = sd / H
 
     a_cut = a_target + (a_entry - a_target) * cut_ratio
@@ -591,6 +611,8 @@ def VOM_VOA(
             "supplementary_cut_ellipse_a_mm": a_cut_adjusted,
             "supplementary_cut_ellipse_b_mm": b_cut_adjusted,
             "stand_dist_mm": sd,
+            "requested_stand_dist_mm": requested_sd,
+            "stand_dist_clipped_to_corridor": bool(requested_sd > H),
             "comparison_metrics": {
                 "physical_vom_mm3": float(vom),
                 "physical_svom_mm3": float(svom),

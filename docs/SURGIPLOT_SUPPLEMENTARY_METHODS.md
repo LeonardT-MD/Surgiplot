@@ -4,14 +4,13 @@
 
 ### 1. Software architecture
 
-`Surgiplot` is a coordinate-based morphometric framework for neurosurgical anatomical analysis. The project consists of a shared computational core and multiple user-facing front ends. The same metric kernels are exposed through:
+`Surgiplot` is a coordinate-based morphometric framework for neurosurgical anatomical analysis. The standalone project exposes one computational core through:
 
 - a Python library
 - a command-line interface
 - a desktop GUI
-- a 3D Slicer extension (`SurgiplotToolkit`)
 
-The purpose of this design is to preserve identical metric definitions across interactive and scripted workflows.
+The purpose of this design is to preserve identical metric definitions across standalone interactive and scripted workflows. `SurgiplotToolkit` is a separately released companion extension for 3D Slicer and must be version-matched and regression-tested when cross-interface equivalence is claimed.
 
 ### 2. Dataset model
 
@@ -47,7 +46,7 @@ Standardized surgical freedom is obtained by projecting each cardinal entry poin
 
 #### 4.4 AoE
 
-`AOE` is the included angle at point `B` between rays `BA` and `BC`. In interactive Slicer use, the result is displayed as a triangle and curved arc to facilitate immediate interpretation of the angle in the 3D scene.
+`AOE` is the principal included angle at point `B` between rays `BA` and `BC`, bounded to `[0°, 180°]`. It does not recover a reflex angle and is not a complete implementation of the vectorial circular AoE protocol. Companion Slicer interfaces may display the construct as a triangle and curved arc.
 
 #### 4.5 AoA / SF
 
@@ -62,7 +61,7 @@ The debug payload retains ordered labels, point-role order, warnings, pivot, ori
 
 #### 4.6 VOM / sVOM / VoA
 
-`VOM_VOA` replaces the entry and target polygons with area-matched ellipses constructed on the PCA best-fit plane of each polygon. This preserves the measured polygon area while imposing an analytically stable cross-sectional geometry. The corridor volume is then modeled as the shell between the entry and target elliptical sections. The standardized distal component (`sVOM`) is defined by a cut ellipse at a protocol-defined distance from the target.
+`VOM_VOA` replaces the entry and target polygons with area-matched ellipses constructed on the SVD best-fit plane of each polygon. Ellipse aspect ratio is derived from coordinate extents along the in-plane SVD axes. This preserves measured polygon area while imposing an analytically stable cross-sectional geometry. The corridor volume is modeled as a capped, triangulated loft between target and entry sections and evaluated in a centroid-shifted local frame. The standardized distal component (`sVOM`) is defined by a cut ellipse at a protocol-defined distance from the target.
 
 The implementation also derives:
 

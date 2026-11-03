@@ -13,20 +13,22 @@ class AOEResult:
     def plot(self, ax) -> None:
         import numpy as np
 
-        # Clear the 3D axis and replace it with a simple polar-style 2D plot
+        # Clear the 3D axis and show the implemented principal-angle domain.
         fig = ax.figure
         fig.clear()
         pax = fig.add_subplot(111, projection="polar")
 
-        total = 360.0
+        total = 180.0
         angle = max(0.0, min(float(self.aoe_deg), total))
         remaining = max(0.0, total - angle)
 
         pax.set_theta_zero_location("N")
         pax.set_theta_direction(-1)
+        pax.set_thetamin(0.0)
+        pax.set_thetamax(180.0)
         pax.set_ylim(0, 1)
         pax.set_yticks([])
-        pax.set_xticks(np.deg2rad(np.arange(0, 360, 45)))
+        pax.set_xticks(np.deg2rad(np.arange(0, 181, 30)))
         pax.grid(alpha=0.25)
 
         pax.bar(
@@ -60,7 +62,7 @@ class AOEResult:
             fontsize=13,
             fontweight="bold",
         )
-        pax.set_title("AoE · Angle of Exposure", va="bottom")
+        pax.set_title("AoE · Principal Angle of Exposure", va="bottom")
         fig.canvas.draw_idle()
 
 
@@ -101,8 +103,9 @@ def AOE(
     AoE is taken as the included angle at pivot B between vectors (A-B) and (C-B):
       AoE = arccos( (u·v) / (||u|| ||v||) )   in degrees
 
-    Note: If you need the specific Porto et al. construction (AoE = 2*(a+b)),
-    you can replace this function body while keeping the same signature.
+    This implementation is the principal included angle in [0, 180] degrees.
+    It is not a reflex-angle reconstruction and must not be interpreted as a
+    greater-than-180-degree circular exposure measurement.
     """
     if A is None or B is None or C is None:
         raise ValueError("Provide A, B, C (names or coordinates).")
@@ -110,6 +113,8 @@ def AOE(
     A_pt = _resolve_point(data, A)
     B_pt = _resolve_point(data, B)
     C_pt = _resolve_point(data, C)
+    if not np.all(np.isfinite(np.vstack([A_pt, B_pt, C_pt]))):
+        raise ValueError("A, B, and C must contain only finite coordinates.")
 
     u = A_pt - B_pt
     v = C_pt - B_pt

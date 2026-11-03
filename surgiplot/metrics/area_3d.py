@@ -72,6 +72,10 @@ def _resolve_poly(data, spec) -> np.ndarray:
         raise ValueError("Polygon must be an (N,3) array-like.")
     if poly.shape[0] < 3:
         raise ValueError("Need at least 3 points to compute an area.")
+    if not np.all(np.isfinite(poly)):
+        raise ValueError("Polygon coordinates must be finite.")
+    if np.unique(poly, axis=0).shape[0] < 3:
+        raise ValueError("Polygon requires at least 3 distinct points.")
     return poly
 
 
@@ -92,6 +96,9 @@ def AREA_3D(
     P = _resolve_poly(data, polygon)
     pts2, c, basis = project_to_plane_2d(P)
     area = float(shoelace_area(pts2))
+    scale = max(float(np.ptp(pts2, axis=0).max()), 1.0)
+    if area <= np.finfo(float).eps * scale * scale * 100.0:
+        raise ValueError("Polygon is degenerate or its vertex order produces zero area.")
     coplanar_polygon_3d = pts2 @ basis[:, :2].T + c
 
     dbg = None

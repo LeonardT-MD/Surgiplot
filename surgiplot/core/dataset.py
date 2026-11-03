@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, Any, List, Union, Sequence
+import json
+import math
 import re
 import numpy as np
 
@@ -42,9 +44,16 @@ class Dataset:
     # ----------------------------
     def add_point(self, name: str, xyz: PointLike, overwrite: bool = False) -> None:
         name = str(name).strip()
+        if not name:
+            raise ValueError("Point name cannot be empty.")
+        case_match = next((key for key in self.points if key.lower() == name.lower()), None)
+        if case_match is not None and case_match != name:
+            raise KeyError(f"Point '{name}' conflicts case-insensitively with '{case_match}'.")
         if (not overwrite) and (name in self.points):
             raise KeyError(f"Point '{name}' already exists.")
         arr = np.asarray(xyz, dtype=float).reshape(3,)
+        if not np.all(np.isfinite(arr)):
+            raise ValueError(f"Point '{name}' must contain only finite coordinates.")
         self.points[name] = arr
 
     def add_alias(self, alias: str, target: str, overwrite: bool = False) -> None:
@@ -55,9 +64,18 @@ class Dataset:
         if target not in self.points:
             raise KeyError(f"Cannot alias to missing point '{target}'.")
 
-        # Do not allow alias to shadow an existing canonical point name (unless overwrite and it's an alias already)
-        if alias in self.points:
-            raise KeyError(f"Alias '{alias}' conflicts with an existing point name.")
+        point_match = next((key for key in self.points if key.lower() == alias.lower()), None)
+        if point_match is not None:
+            raise KeyError(f"Alias '{alias}' conflicts with point name '{point_match}'.")
+
+        alias_match = next((key for key in self.aliases if key.lower() == alias.lower()), None)
+        if alias_match is not None and alias_match != alias:
+            existing_target = self.aliases[alias_match]
+            if not overwrite or existing_target != target:
+                raise KeyError(
+                    f"Alias '{alias}' conflicts case-insensitively with existing alias '{alias_match}'."
+                )
+            self.aliases.pop(alias_match, None)
 
         if (not overwrite) and (alias in self.aliases):
             raise KeyError(f"Alias '{alias}' already exists.")
@@ -84,7 +102,7 @@ class Dataset:
         self.aliases[target] = target  # ensure exists as canonical mapping (harmless)
         # store preferred label separately to avoid polluting alias logic:
         self.meta.setdefault("preferred_labels", {})
-        self.meta["preferred_labels"][target] = label
+        self.meta["preferred_labels"].setdefault(target, label)
 
     def labels_for_point(self, name: str) -> List[str]:
         canonical = self.resolve_name(name)
@@ -95,9 +113,12 @@ class Dataset:
             if target == canonical:
                 labels.append(alias)
         preferred = self.meta.get("preferred_labels", {}).get(canonical)
-        if preferred and preferred not in labels:
-            labels.insert(0, str(preferred))
-        return sorted(dict.fromkeys(labels), key=str.lower)
+        unique = sorted(dict.fromkeys(labels), key=str.lower)
+        if preferred:
+            preferred = str(preferred)
+            unique = [label for label in unique if label != preferred]
+            unique.insert(0, preferred)
+        return unique
 
     def preferred_label(self, name: str) -> str:
         canonical = self.resolve_name(name)
@@ -140,17 +161,25 @@ class Dataset:
             raise ValueError("New point name cannot be empty.")
         if target == canonical:
             return canonical
-        if target in self.points and not overwrite:
-            raise KeyError(f"Point '{target}' already exists.")
-        if target in self.aliases and self.aliases.get(target) != canonical:
-            raise KeyError(f"Name '{target}' conflicts with an existing alias.")
+        point_match = next(
+            (key for key in self.points if key != canonical and key.lower() == target.lower()),
+            None,
+        )
+        if point_match is not None and not (overwrite and point_match == target):
+            raise KeyError(f"Point '{target}' conflicts with existing point '{point_match}'.")
+        alias_match = next(
+            (key for key in self.aliases if key.lower() == target.lower()),
+            None,
+        )
+        if alias_match is not None and self.aliases.get(alias_match) != canonical:
+            raise KeyError(f"Name '{target}' conflicts with existing alias '{alias_match}'.")
 
         point = self.points.pop(canonical)
         self.points[target] = point
 
         remapped_aliases: Dict[str, str] = {}
         for alias, alias_target in self.aliases.items():
-            if alias == canonical:
+            if alias == canonical or alias.lower() == target.lower():
                 continue
             remapped_aliases[alias] = target if alias_target == canonical else alias_target
         self.aliases = remapped_aliases
@@ -375,21 +404,27 @@ class Dataset:
     def export_csv(self, path: str) -> None:
         import csv
         rows = self.to_table_rows()
+        delimiter = "\t" if str(path).lower().endswith(".tsv") else ","
         with open(path, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=["name", "x", "y", "z", "labels"])
+            w = csv.DictWriter(
+                f,
+                fieldnames=["name", "x", "y", "z", "labels"],
+                delimiter=delimiter,
+            )
             w.writeheader()
             for r in rows:
                 w.writerow(r)
 
     def export_json(self, path: str) -> None:
-        import json
         payload = {
-            "meta": self.meta,
+            "schema": "surgiplot.dataset",
+            "schema_version": 1,
+            "meta": _json_safe(self.meta),
             "points": {k: v.tolist() for k, v in self.points.items()},
-            "aliases": self.aliases,
+            "aliases": dict(self.aliases),
         }
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
+            json.dump(payload, f, indent=2, allow_nan=False)
 
     # ----------------------------
     # GUI helper (optional)
@@ -485,3 +520,20 @@ class Dataset:
         from surgiplot.metrics import VOLUME_3D
 
         return VOLUME_3D(data=self, points=points, return_debug=return_debug, **kwargs)
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert common scientific-Python values into JSON-compatible objects."""
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return _json_safe(value.item())
+    if isinstance(value, float):
+        return value if math.isfinite(value) else str(value)
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    return str(value)

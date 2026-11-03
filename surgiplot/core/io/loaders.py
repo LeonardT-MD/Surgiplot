@@ -6,7 +6,7 @@ import re
 import numpy as np
 
 from ..dataset import Dataset
-from .normalized import load_formatted_database
+from .normalized import load_formatted_database, load_normalized_json
 from .parsers import (
     is_stryker_annotation_text,
     parse_stryker_points,
@@ -88,6 +88,9 @@ def _records_to_dataset(
     Used for non-Stryker vendor imports where point_1, point_2, ...
     is the intended canonical naming.
     """
+    if not records:
+        raise ValueError("No importable 3D points were found in this file.")
+
     ds = Dataset(meta=dict(meta or {}))
     if source:
         ds.meta["source"] = source
@@ -134,6 +137,9 @@ def _stryker_records_to_dataset(
 
     So we preserve navigation numbering instead of reindexing sequentially.
     """
+    if not records:
+        raise ValueError("No Stryker annotation points were found in this file.")
+
     ds = Dataset(meta=dict(meta or {}))
     ds.meta["source"] = "navigation"
     ds.meta["vendor"] = "stryker"
@@ -169,6 +175,8 @@ def _stryker_records_to_dataset(
 
 def detect_navigation_format(path: str | Path) -> str:
     p = Path(path)
+    if not p.is_file():
+        raise FileNotFoundError(f"Input file does not exist: {p}")
     text = p.read_text(encoding="utf-8", errors="ignore")
 
     if is_medtronic_json(text):
@@ -198,6 +206,8 @@ def load_navigation_file(
         raise ValueError(f"Invalid navigation_format '{navigation_format}'.")
 
     p = Path(path)
+    if not p.is_file():
+        raise FileNotFoundError(f"Navigation file does not exist: {p}")
     text = p.read_text(encoding="utf-8", errors="ignore")
 
     if fmt == "auto":
@@ -301,6 +311,8 @@ def load_dataset(
         raise ValueError(f"Invalid kind '{kind}'. Allowed: {sorted(_KIND_ALLOWED)}")
 
     p = Path(path)
+    if not p.is_file():
+        raise FileNotFoundError(f"Input file does not exist: {p}")
 
     if kind == "database":
         return load_formatted_database(
@@ -338,10 +350,7 @@ def load_dataset(
             point_prefix=point_prefix,
         )
 
-    try:
-        detected = detect_navigation_format(p)
-    except Exception:
-        detected = "generic"
+    detected = detect_navigation_format(p)
 
     if detected in {"stryker", "medtronic"}:
         return load_navigation_file(
@@ -352,6 +361,9 @@ def load_dataset(
             meta=meta,
         )
 
+    if p.suffix.lower() == ".json":
+        return load_normalized_json(p)
+
     if p.suffix.lower() in {".xlsx", ".xls", ".csv", ".tsv"}:
         try:
             return load_formatted_database(
@@ -361,8 +373,22 @@ def load_dataset(
                 alias_points=alias_points,
                 point_prefix=point_prefix,
             )
-        except Exception:
-            pass
+        except ValueError as normalized_error:
+            if p.suffix.lower() in {".xlsx", ".xls"}:
+                raise
+            text = p.read_text(encoding="utf-8", errors="ignore")
+            pairs = _parse_generic_points(text)
+            if pairs:
+                records = [{"name": name, "xyz": xyz} for name, xyz in pairs]
+                return _records_to_dataset(
+                    records,
+                    source=source,
+                    path=str(p),
+                    meta={**(meta or {}), "coordinate_system": "LPS"},
+                    alias_points=alias_points,
+                    point_prefix=point_prefix,
+                )
+            raise ValueError(f"Could not load formatted dataset: {p}") from normalized_error
 
     text = p.read_text(encoding="utf-8", errors="ignore")
     pairs = _parse_generic_points(text)
@@ -371,6 +397,8 @@ def load_dataset(
             "This file looks like a vendor navigation export, but no point annotations were found. "
             "Try the native annotation-points export file."
         )
+    if not pairs:
+        raise ValueError("No importable 3D points were found in this file.")
     records = [{"name": name, "xyz": xyz} for name, xyz in pairs]
     return _records_to_dataset(
         records,
@@ -403,6 +431,10 @@ def load_points_from_manual(
       Optional iterable of names. If omitted, uses point_1..point_N as canonical names.
     """
     pts = [np.asarray(p, dtype=float).reshape(3,) for p in points]
+    if not pts:
+        raise ValueError("At least one manual point is required.")
+    if not all(np.all(np.isfinite(point)) for point in pts):
+        raise ValueError("Manual points must contain only finite coordinates.")
 
     if names is None:
         names = [f"{point_prefix}{i}" for i in range(1, len(pts) + 1)]
@@ -411,6 +443,8 @@ def load_points_from_manual(
     names = [str(n).strip() for n in names]
     if len(names) != len(pts):
         raise ValueError("names and points must have same length.")
+    if any(not name for name in names):
+        raise ValueError("Point names cannot be empty.")
 
     ds = Dataset(meta={})
     source = (source or "").strip().lower()
