@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 from surgiplot.cli.app import app
@@ -40,4 +41,4 @@ def test_range_expansion_in_area_command(tmp_path) -> None:
     )
     result = runner.invoke(app, ["metric", "area", str(path), "--polygon", "point_1-4"])
     assert result.exit_code == 0, result.stdout
-    assert json.loads(result.stdout)["area_mm2"] == 4.0
+    assert json.loads(result.stdout)["area_mm2"] == pytest.approx(4.0)
