@@ -200,4 +200,4 @@ Never commit generated clinical outputs. Removing a file in a new commit does no
 
 ## 14. Contribution and licensing status
 
-Surgiplot is distributed under the MIT License. Contributions must be compatible with that license and must not include patient data, restricted third-party code, model weights without redistribution permission, or institutional material that the contributor is not authorized to publish. Copyright and authorship attribution remain recorded in the license, citation metadata, Git history, and release notes.
+Surgiplot is source-available under the PolyForm Noncommercial License 1.0.0. Contributions must be compatible with that license and must not include patient data, restricted third-party code, model weights without redistribution permission, or institutional material that the contributor is not authorized to publish. Commercial use requires a separate written license from the copyright holder. Copyright and authorship attribution remain recorded in the license, citation metadata, Git history, and release notes.

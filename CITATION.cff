@@ -10,6 +10,7 @@ version: "0.2.0"
 date-released: "2026-11-03"
 repository-code: "https://github.com/LeonardT-MD/Surgiplot"
 url: "https://github.com/LeonardT-MD/Surgiplot"
+license: "PolyForm-Noncommercial-1.0.0"
 keywords:
   - neurosurgery
   - neuroanatomy

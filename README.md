@@ -9,7 +9,7 @@
 # Surgiplot
 
 [![CI](https://github.com/LeonardT-MD/Surgiplot/actions/workflows/ci.yml/badge.svg)](https://github.com/LeonardT-MD/Surgiplot/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 
 Surgiplot is a coordinate-native research software package for quantitative neurosurgical anatomy. It converts named three-dimensional landmarks into inspectable morphometric constructs through one shared Python computation core, exposed through a command-line interface and a desktop graphical interface.
 
@@ -312,4 +312,4 @@ Surgiplot was created by Dr. Leonardo Tariciotti MD. Additional contributors sho
 
 ## License
 
-Surgiplot is distributed under the [MIT License](LICENSE). The license permits software reuse and redistribution but does not alter the research-only scope, validation limitations, or medical-device disclaimer described above.
+Surgiplot is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE), SPDX identifier `PolyForm-Noncommercial-1.0.0`. The license permits use, modification, and distribution for noncommercial purposes. Commercial use requires a separate written license from the copyright holder. Third-party dependencies remain governed by their own licenses.

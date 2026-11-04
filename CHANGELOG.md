@@ -4,6 +4,10 @@ All notable changes to Surgiplot are documented here. The project is pre-1.0; va
 
 ## Unreleased
 
+### Licensing
+
+- changed the current source tree from the MIT License to the PolyForm Noncommercial License 1.0.0; previously published releases remain governed by the license distributed with those releases.
+
 ### Documentation
 
 - added a consolidated Getting Started guide covering direct release installation, terminal syntax, a complete CLI walkthrough for every metric family, desktop and Python workflows, expected outputs, and common failures;
