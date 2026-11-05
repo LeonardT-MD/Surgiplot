@@ -21,7 +21,7 @@ ruff check surgiplot tests
 python -m compileall -q surgiplot tests
 ```
 
-The version `0.3.0` regression suite contains 35 tests covering metrics, transforms, data I/O, CLI behavior, vendor detection, study statistics, and the revised VOM/sVOM/VoA geometry.
+The version `0.3.0` regression suite contains 37 tests covering metrics, transforms, data I/O, CLI behavior, vendor detection, study statistics, and the revised VOM/sVOM/VoA geometry.
 
 ## 3. Analytical metric fixtures
 
@@ -67,6 +67,7 @@ The suite also verifies:
 - clipped sVOM reuses the full VOM mesh and equals VOM exactly;
 - perpendicular and tangential approaches return `90°` and `0°` VoA, respectively;
 - contour reversal and cyclic reindexing do not change VOM after frame alignment;
+- a `+70°` entry major-axis fit selects the geometrically equivalent `−20°` axis-swapped frame, records a 20° correspondence rotation, and avoids the forced large-twist loft;
 - a single gross contour outlier is identified and excluded from area-constrained ellipse fitting;
 - degenerate or coincident cross-sections fail explicitly.
 

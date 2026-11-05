@@ -355,13 +355,15 @@ This creates a smooth geometric solid that is still tied to the measured polygon
 3. the polygon area is computed using the shoelace formula
 4. deterministic consensus and Tukey-biweight weighting identify contour outliers, which are reported explicitly
 5. nearly circular sections are regularized because their in-plane axis orientation is not identifiable
-6. target and entry frames are aligned by testing valid axis permutations and signs
+6. target and entry frames are aligned by testing every valid right-handed sign and axis permutation; semiaxes are exchanged with an axis swap, and the correspondence requiring the smallest rotation is selected
 7. intermediate orientations are interpolated using quaternion SLERP; centers and semiaxes are interpolated linearly
 8. the stack of rings is triangulated into a closed 3D mesh
 9. longitudinal refinement continues until the mesh volume meets the declared convergence tolerance
 10. the enclosed mesh volume is computed after translating mesh vertices to a local centroid reference for numerical stability
 
 This yields `VOM`.
+
+The minimum-rotation correspondence is a continuity regularization. It prevents arbitrary ellipse-axis labels from creating a large helical artifact, but endpoint ellipses alone cannot establish a unique material trajectory. The selected correspondence, swap flag, and rotation are therefore retained in debug output and should be reported when the choice is methodologically relevant.
 
 ### VoA
 

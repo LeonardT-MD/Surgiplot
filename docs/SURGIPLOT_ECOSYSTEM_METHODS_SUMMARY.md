@@ -275,7 +275,7 @@ Method summary:
 1. fit best-fit planes to entry and target polygons
 2. compute polygon areas
 3. robustly fit direct least-squares ellipses with outlier handling, near-circle regularization, and exact polygon-area matching
-4. align entry and target frames and interpolate orientation with quaternion SLERP
+4. align entry and target frames by the minimum rotation over valid sign and axis permutations, exchange semiaxes when axes swap, and then interpolate orientation with quaternion SLERP
 5. compute full corridor volume from a convergence-refined capped triangulated loft in a centroid-shifted local numerical frame
 6. define a distal cut ellipse at standard distance for `sVOM`
 7. compute the distal truncated volume
@@ -284,6 +284,7 @@ Method summary:
 Caveats:
 
 - the ellipse replacement is deliberate and should be reported as such
+- the minimum-rotation axis correspondence prevents an arbitrary forced twist but is a declared regularization, not a directly observed anatomical material path
 - the method expresses corridor geometry in a stabilized analytic form, not as raw surface morphology
 
 ## 5. Python library layer

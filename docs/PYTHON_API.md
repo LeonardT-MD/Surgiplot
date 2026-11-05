@@ -241,6 +241,8 @@ result.voa_deg
 
 Type: `VOMVOAResult`. Entry and target inputs are ordered polygon perimeters, not unordered point clouds.
 
+With `return_debug=True`, the VOM payload includes `ellipse_frame_correspondence_policy`, `entry_frame_alignment_operation`, `entry_frame_alignment_swapped_axes`, and `entry_frame_alignment_rotation_deg`. The policy evaluates equivalent signed and axis-swapped ellipse frames and chooses the minimum-rotation correspondence before quaternion SLERP; semiaxes follow the selected swap.
+
 ## 6. Convenience wrappers
 
 ```python

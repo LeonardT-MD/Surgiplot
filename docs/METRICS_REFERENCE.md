@@ -316,7 +316,9 @@ Target-to-entry interpolation parameter \(q\in[0,1]\) controls:
 - semiaxes: linear interpolation;
 - orientation: quaternion spherical linear interpolation (SLERP).
 
-Before interpolation, target and entry normals are aligned. All valid in-plane axis permutations and sign combinations are evaluated, and the correspondence producing the smallest rotation is selected. Nearly circular sections use minimum-twist parallel transport because their in-plane major axis is not identifiable.
+Before interpolation, target and entry normals are aligned. An ellipse does not possess a directed material major axis: simultaneous sign reversal leaves its frame unchanged, and a 90° frame rotation combined with exchanging the two semiaxes describes the same outline. Surgiplot therefore evaluates every valid right-handed in-plane sign and axis permutation. When an axis-swapped representation minimizes the target-to-entry rotation, both the frame and its associated semiaxes are swapped before interpolation. Quaternion SLERP then follows this minimum-rotation correspondence. This is the formal corridor rule sometimes illustrated as “Option B”; it prevents an artificial large twist such as forcing `+70°` when the same endpoint ellipse admits an equivalent `−20°` swapped representation. Nearly circular sections use minimum-twist parallel transport because their in-plane major axis is not identifiable.
+
+Endpoint ellipses alone do not identify a physical material trajectory through anatomy. Minimum rotation is therefore a declared regularization assumption chosen for geometric continuity, not proof that tissue fibers or surgical instruments follow the interpolated frame.
 
 Longitudinal resolution is not a fixed ring count. Refinement starts with 9 rings and doubles the number of intervals (`9, 17, 33, ...`) until successive closed-mesh volumes differ by no more than `1e-4` relative plus `1e-6 mm³` absolute, with a 257-ring safety limit. Angular resolution is similarly criterion-based: the smallest regular polygon whose area differs from its analytical ellipse by at most `1e-4` is used (currently 257 vertices). Adjacent rings are triangulated and both ends are capped.
 
@@ -330,7 +332,7 @@ V=\left|\sum \frac{a\cdot(b\times c)}{6}\right|
 
 Before evaluation, Surgiplot subtracts the mean mesh vertex position from every triangle vertex. This local reference does not change the solid but prevents catastrophic cancellation when global coordinates are large. Translation invariance is regression-tested at million-unit offsets.
 
-The debug payload records angular tolerance, selected longitudinal sections, convergence history, and whether the maximum refinement was reached.
+The debug payload records angular tolerance, selected longitudinal sections, convergence history, and whether the maximum refinement was reached. It also reports `ellipse_frame_correspondence_policy`, `entry_frame_alignment_operation`, `entry_frame_alignment_swapped_axes`, and `entry_frame_alignment_rotation_deg` so the selected correspondence is auditable.
 
 ### 9.6 sVOM
 
@@ -362,7 +364,7 @@ The debug payload also provides legacy polygon-frustum, ellipse-frustum, adjuste
 
 ### Methodological interpretation
 
-The primary software outputs come from an explicit 3D loft. No separate angle-dependent multiplier is applied to the primary volume. Robust ellipse fitting, outlier exclusion, near-circle regularization, frame alignment, SLERP, and convergence tolerances are analytical modeling choices and must be reported.
+The primary software outputs come from an explicit 3D loft. No separate angle-dependent multiplier is applied to the primary volume. Robust ellipse fitting, outlier exclusion, near-circle regularization, minimum-rotation axis correspondence, SLERP, and convergence tolerances are analytical modeling choices and must be reported. Because an axis swap also changes which semiaxis is interpolated to which endpoint semiaxis, the choice can change VOM and sVOM numerically; it is not merely a display correction.
 
 References:
 

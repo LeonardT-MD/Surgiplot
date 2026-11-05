@@ -2891,6 +2891,7 @@ class MetricPanel(QtWidgets.QWidget):
             return "\n".join(lines)
 
         if title == "VOM_VOA":
+            debug = payload.get("debug") if isinstance(payload.get("debug"), dict) else {}
             return "\n".join([
                 heading,
                 "",
@@ -2898,6 +2899,12 @@ class MetricPanel(QtWidgets.QWidget):
                 f"- VoA (Visuo-operative Angle): {float(payload.get('voa_deg', 0.0)):.2f} deg",
                 f"- VOM (Volume of Operative Maneuverability): {float(payload.get('vom_mm3', 0.0)):.2f} mm^3",
                 f"- sVOM (standardized VOM): {float(payload.get('svom_mm3', 0.0)):.2f} mm^3",
+                "",
+                "Corridor Construction",
+                f"- Method version: {debug.get('method_version', 'unknown')}",
+                "- Frame correspondence: minimum rotation across valid sign and axis permutations",
+                f"- Entry axes swapped: {'yes' if debug.get('entry_frame_alignment_swapped_axes') else 'no'}",
+                f"- Selected frame rotation: {float(debug.get('entry_frame_alignment_rotation_deg', 0.0)):.2f} deg",
                 "",
                 "Interpretation",
                 "Reported volume corresponds to the physical 3D lofted corridor model.",
@@ -3482,7 +3489,26 @@ class MainWindow(QtWidgets.QMainWindow):
         file_menu.addAction(QtGuiAction("Quit", self, shortcut="Ctrl+Q", triggered=self.close))
 
         help_menu = m.addMenu("&Help")
+        help_menu.addAction(QtGuiAction("VOM / sVOM / VoA method", self, triggered=self._vom_method_help))
         help_menu.addAction(QtGuiAction("About", self, triggered=self._about))
+
+    def _vom_method_help(self):
+        msg = (
+            "VOM / sVOM / VoA\n\n"
+            "Entry and target contours are converted to robust area-matched ellipses. "
+            "Because an ellipse has equivalent signed and axis-swapped coordinate frames, "
+            "Surgiplot tests all valid right-handed correspondences and selects the one "
+            "requiring the smallest target-to-entry rotation. Semiaxes are exchanged when "
+            "the selected correspondence swaps axes.\n\n"
+            "This minimum-rotation rule prevents the artificial large torsion produced by "
+            "forcing major axis to major axis when a shorter equivalent correspondence exists. "
+            "Quaternion SLERP then interpolates the selected frames; near-circular sections "
+            "use minimum-twist parallel transport because their major-axis direction is unstable.\n\n"
+            "Always inspect the generated 3D corridor. Endpoint contours alone cannot prove a "
+            "material anatomical trajectory, so the minimum-rotation correspondence is a declared "
+            "modeling assumption rather than a directly observed tissue path."
+        )
+        QtWidgets.QMessageBox.information(self, "VOM correspondence method", msg)
 
     def _about(self):
         msg = (

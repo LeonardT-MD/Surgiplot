@@ -15,6 +15,7 @@ LOFT_VOLUME_RTOL = 1e-4
 LOFT_VOLUME_ATOL_MM3 = 1e-6
 LOFT_MAX_SECTIONS = 257
 VOM_METHOD_VERSION = "3d-loft-2.0"
+ELLIPSE_FRAME_CORRESPONDENCE_POLICY = "minimum_rotation_with_axis_permutation"
 
 
 @dataclass
@@ -483,7 +484,15 @@ def _rotation_angle(first: np.ndarray, second: np.ndarray) -> float:
 
 
 def _align_ellipse_frame(reference_fit: Dict[str, Any], moving_fit: Dict[str, Any]) -> Dict[str, Any]:
-    """Resolve PCA sign/axis ambiguity using the smallest entry-target rotation."""
+    """Resolve ellipse-frame ambiguity with the minimum-rotation correspondence.
+
+    An ellipse is unchanged when both in-plane axes are sign-flipped or when
+    the axes are exchanged together with their semiaxes. Treating the fitted
+    major axis as an immutable material direction can therefore introduce an
+    artificial large twist into the loft. Evaluate every proper right-handed
+    sign/axis representation and retain the one with the smallest rotation
+    from the reference frame (the documented Option B policy).
+    """
     reference = np.asarray(reference_fit["basis"], dtype=float)
     moving = np.asarray(moving_fit["basis"], dtype=float).copy()
     a = float(moving_fit["ellipse_a"])
@@ -528,6 +537,8 @@ def _align_ellipse_frame(reference_fit: Dict[str, Any], moving_fit: Dict[str, An
     )
     aligned["frame_alignment_operation"] = operation
     aligned["frame_alignment_rotation_deg"] = float(np.degrees(_rotation_angle(reference, aligned_basis)))
+    aligned["frame_alignment_policy"] = ELLIPSE_FRAME_CORRESPONDENCE_POLICY
+    aligned["frame_alignment_swapped_axes"] = bool(operation.startswith("swap_"))
     return aligned
 
 
@@ -837,7 +848,8 @@ def VOM_VOA(
     1. Project irregular entry and target polygons into their PCA planes.
     2. Robustly fit direct least-squares ellipses and rescale them to the inlier polygon areas.
     3. Compute VoA from the centroid-to-centroid trajectory vs the target-plane normal.
-    4. Align ellipse frames and interpolate orientation with quaternion SLERP.
+    4. Select the minimum-rotation valid axis correspondence (axis swaps allowed)
+       and interpolate orientation with quaternion SLERP.
     5. Build a physically defined 3D loft with convergence-controlled longitudinal refinement.
     6. Compute VOM and sVOM as the enclosed volume of that solid and its distal segment.
 
@@ -982,9 +994,11 @@ def VOM_VOA(
             "physical_volume_model": "3d_lofted_elliptical_frustum",
             "method_version": VOM_METHOD_VERSION,
             "orientation_interpolation": "aligned_quaternion_slerp",
+            "ellipse_frame_correspondence_policy": ELLIPSE_FRAME_CORRESPONDENCE_POLICY,
             "target_normal_method": "normalized_svd_plane_normal",
             "entry_frame_alignment_operation": entry_fit.get("frame_alignment_operation"),
             "entry_frame_alignment_rotation_deg": entry_fit.get("frame_alignment_rotation_deg"),
+            "entry_frame_alignment_swapped_axes": entry_fit.get("frame_alignment_swapped_axes", False),
             "ellipse_polygon_samples": int(np.asarray(target_fit["ellipse_3d"]).shape[0]),
             "ellipse_polygon_max_relative_area_error": ELLIPSE_POLYGON_AREA_RTOL,
             "near_circle_axis_ratio_threshold": NEAR_CIRCLE_AXIS_RATIO,

@@ -88,6 +88,8 @@ Validation rejects non-finite coordinates, blank names, duplicate canonical iden
 
 Select an ordered entry perimeter, an ordered target perimeter, and the standard distance. Lists accept comma-separated names and ranges. Verify that polygon traversal follows the anatomical boundary without crossing it.
 
+The generated loft uses the minimum-rotation valid ellipse-frame correspondence, including an axis swap when that is the shorter equivalent representation. The result panel reports whether the entry axes were swapped and the selected frame rotation. Open **Help → VOM / sVOM / VoA method** for the full assumption and inspect the 3D corridor before recording the result.
+
 ### AoA / SF
 
 Assign all five visible roles:

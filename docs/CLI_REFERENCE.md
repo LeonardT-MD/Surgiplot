@@ -136,11 +136,15 @@ Output keys:
   "VoA_deg": 0.0,
   "VOM_mm3": 1000.0,
   "sVOM_mm3": 500.0,
-  "method_version": "3d-loft-2.0"
+  "method_version": "3d-loft-2.0",
+  "ellipse_frame_correspondence_policy": "minimum_rotation_with_axis_permutation",
+  "entry_frame_alignment_operation": "swap_v_minus_u",
+  "entry_frame_alignment_swapped_axes": true,
+  "entry_frame_alignment_rotation_deg": 20.0
 }
 ```
 
-The `vom` command currently returns the same composite payload. `method_version` should be retained with exported results because the revised loft is not numerically interchangeable with earlier VOM formulations. Scalar selectors are:
+The `vom` command currently returns the same composite payload. Retain the method version and frame-correspondence fields with exported results because the selected axis correspondence can change both the rendered loft and its numerical volume. Scalar selectors are:
 
 ```bash
 surgiplot metric voa points.json --entry entry_1-8 --target target_1-8

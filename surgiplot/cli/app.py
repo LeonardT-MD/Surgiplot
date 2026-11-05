@@ -225,6 +225,18 @@ def metric_vom_voa(
             "VOM_mm3": result.vom_mm3,
             "sVOM_mm3": result.svom_mm3,
             "method_version": (result.debug or {}).get("method_version", "unknown"),
+            "ellipse_frame_correspondence_policy": (result.debug or {}).get(
+                "ellipse_frame_correspondence_policy", "unknown"
+            ),
+            "entry_frame_alignment_operation": (result.debug or {}).get(
+                "entry_frame_alignment_operation", "unknown"
+            ),
+            "entry_frame_alignment_swapped_axes": bool(
+                (result.debug or {}).get("entry_frame_alignment_swapped_axes", False)
+            ),
+            "entry_frame_alignment_rotation_deg": (result.debug or {}).get(
+                "entry_frame_alignment_rotation_deg", 0.0
+            ),
         }
     )
 
@@ -253,6 +265,18 @@ def metric_vom(
             "VOM_mm3": result.vom_mm3,
             "sVOM_mm3": result.svom_mm3,
             "method_version": (result.debug or {}).get("method_version", "unknown"),
+            "ellipse_frame_correspondence_policy": (result.debug or {}).get(
+                "ellipse_frame_correspondence_policy", "unknown"
+            ),
+            "entry_frame_alignment_operation": (result.debug or {}).get(
+                "entry_frame_alignment_operation", "unknown"
+            ),
+            "entry_frame_alignment_swapped_axes": bool(
+                (result.debug or {}).get("entry_frame_alignment_swapped_axes", False)
+            ),
+            "entry_frame_alignment_rotation_deg": (result.debug or {}).get(
+                "entry_frame_alignment_rotation_deg", 0.0
+            ),
         }
     )
 

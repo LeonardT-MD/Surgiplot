@@ -186,6 +186,44 @@ def test_vom_is_invariant_to_contour_start_and_direction_after_frame_alignment()
     assert baseline.debug["vom_longitudinal_convergence"]["converged"] is True
 
 
+def test_vom_uses_minimum_rotation_axis_swap_for_large_in_plane_rotation() -> None:
+    """A +70° major-axis fit is the same ellipse as a −20° swapped frame."""
+    theta = np.linspace(0.0, 2.0 * np.pi, 32, endpoint=False)
+    target = np.column_stack([4.0 * np.cos(theta), np.sin(theta), np.zeros_like(theta)])
+    entry_local = np.column_stack([5.0 * np.cos(theta), 1.5 * np.sin(theta)])
+    angle = np.radians(70.0)
+    rotation = np.asarray([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+    entry_xy = entry_local @ rotation.T
+    entry = np.column_stack([entry_xy, np.full(theta.shape, 100.0)])
+
+    result = VOM_VOA(entry=entry, target=target, stand_dist=50.0, return_debug=True)
+    debug = result.debug or {}
+
+    assert debug["ellipse_frame_correspondence_policy"] == "minimum_rotation_with_axis_permutation"
+    assert debug["entry_frame_alignment_swapped_axes"] is True
+    assert str(debug["entry_frame_alignment_operation"]).startswith("swap_")
+    assert debug["entry_frame_alignment_rotation_deg"] == pytest.approx(20.0, abs=1e-8)
+    assert debug["entry_ellipse_a_mm"] < debug["entry_ellipse_b_mm"]
+
+    a0 = float(debug["target_ellipse_a_mm"])
+    b0 = float(debug["target_ellipse_b_mm"])
+    a1 = float(debug["entry_ellipse_a_mm"])
+    b1 = float(debug["entry_ellipse_b_mm"])
+    da = a1 - a0
+    db = b1 - b0
+    expected_option_b = np.pi * 100.0 * (a0 * b0 + 0.5 * (a0 * db + b0 * da) + da * db / 3.0)
+
+    historical_da = b1 - a0
+    historical_db = a1 - b0
+    historical_major_to_major = np.pi * 100.0 * (
+        a0 * b0
+        + 0.5 * (a0 * historical_db + b0 * historical_da)
+        + historical_da * historical_db / 3.0
+    )
+    assert result.vom_mm3 == pytest.approx(expected_option_b, rel=5e-4)
+    assert result.vom_mm3 > historical_major_to_major * 1.25
+
+
 def test_vom_rejects_degenerate_polygon() -> None:
     with pytest.raises(ValueError):
         VOM_VOA(

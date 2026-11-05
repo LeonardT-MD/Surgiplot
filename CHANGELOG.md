@@ -4,6 +4,13 @@ All notable changes to Surgiplot are documented here. The project is pre-1.0; va
 
 ## Unreleased
 
+### Clarified and validated
+
+- made the VOM ellipse-frame rule explicit as minimum rotation over every valid right-handed sign and axis permutation, with semiaxes exchanged whenever the selected correspondence swaps axes;
+- added a large-rotation regression fixture in which a fitted `+70°` entry major axis is represented by the equivalent `−20°` swapped frame, preventing the historical forced-twist appearance;
+- exposed the frame-correspondence policy, swap decision, selected operation, and rotation in debug output and the desktop GUI;
+- expanded README, technical references, validation guidance, publication methods, and GUI Help text to distinguish the minimum-rotation modeling assumption from a directly observed anatomical material path.
+
 ## 0.3.0 — 2026-11-05
 
 ### Corrected

@@ -258,7 +258,7 @@ The release tests cover:
 - CLI JSON output and point-range expansion;
 - repeatability statistics and non-finite-value filtering.
 
-The VOM mesh-volume calculation is evaluated in a local numerical frame to avoid origin-dependent cancellation. Polygon metrics require explicit vertex order. Sparse volume reconstruction reports either `alpha_shape_auto` or `convex_hull` in debug output; downstream analyses should retain this method field.
+The VOM mesh-volume calculation is evaluated in a local numerical frame to avoid origin-dependent cancellation. Ellipse-frame correspondence follows the minimum-rotation rule: all equivalent right-handed sign and axis permutations are evaluated, semiaxes are exchanged when the selected representation swaps axes, and quaternion SLERP is applied only after that choice. This prevents a fitted major-axis label from forcing an artificial large twist through the corridor. The selected operation and rotation are retained in debug output, and the generated 3D loft should always be inspected. Polygon metrics require explicit vertex order. Sparse volume reconstruction reports either `alpha_shape_auto` or `convex_hull` in debug output; downstream analyses should retain this method field.
 
 See [Validation and Quality Assurance](docs/VALIDATION.md) for test fixtures, tolerances, known limitations, and the release checklist.
 
