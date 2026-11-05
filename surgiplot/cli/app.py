@@ -217,13 +217,14 @@ def metric_vom_voa(
         entry=_resolve_names(dataset, _split_csv(entry)),
         target=_resolve_names(dataset, _split_csv(target)),
         stand_dist=stand_dist,
-        return_debug=False,
+        return_debug=True,
     )
     _emit_json(
         {
             "VoA_deg": result.voa_deg,
             "VOM_mm3": result.vom_mm3,
             "sVOM_mm3": result.svom_mm3,
+            "method_version": (result.debug or {}).get("method_version", "unknown"),
         }
     )
 
@@ -239,12 +240,19 @@ def metric_vom(
     navigation_format: str = typer.Option("auto", "--navigation-format"),
 ):
     dataset = _load_dataset_for_cli(file, source=source, kind=kind, navigation_format=navigation_format)
-    result = VOM(data=dataset, entry=_resolve_names(dataset, _split_csv(entry)), target=_resolve_names(dataset, _split_csv(target)), stand_dist=stand_dist)
+    result = VOM(
+        data=dataset,
+        entry=_resolve_names(dataset, _split_csv(entry)),
+        target=_resolve_names(dataset, _split_csv(target)),
+        stand_dist=stand_dist,
+        return_debug=True,
+    )
     _emit_json(
         {
             "VoA_deg": result.voa_deg,
             "VOM_mm3": result.vom_mm3,
             "sVOM_mm3": result.svom_mm3,
+            "method_version": (result.debug or {}).get("method_version", "unknown"),
         }
     )
 

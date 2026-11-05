@@ -50,7 +50,7 @@ Dataset and metric commands accept these option families:
 | `--kind` | `auto` | `auto`, `navigation`, `database`, `generic` |
 | `--navigation-format` | `auto` | `auto`, `stryker`, `medtronic`, `brainlab`, `generic` |
 
-`source` records provenance and does not transform coordinates. `brainlab` is a reserved explicit selection that is not implemented in version `0.2.0`.
+`source` records provenance and does not transform coordinates. `brainlab` is a reserved explicit selection that is not implemented in version `0.3.0`.
 
 ## 3. Name-list syntax
 
@@ -135,11 +135,12 @@ Output keys:
 {
   "VoA_deg": 0.0,
   "VOM_mm3": 1000.0,
-  "sVOM_mm3": 500.0
+  "sVOM_mm3": 500.0,
+  "method_version": "3d-loft-2.0"
 }
 ```
 
-The `vom` command currently returns the same composite payload. Scalar selectors are:
+The `vom` command currently returns the same composite payload. `method_version` should be retained with exported results because the revised loft is not numerically interchangeable with earlier VOM formulations. Scalar selectors are:
 
 ```bash
 surgiplot metric voa points.json --entry entry_1-8 --target target_1-8

@@ -343,7 +343,7 @@ Real surgical entry and target contours are often irregular polygons rather than
 
 1. preserving the original polygonal coordinates
 2. projecting them into local PCA planes
-3. fitting area-matched reference ellipses
+3. robustly fitting direct least-squares ellipses and applying an exact polygon-area constraint
 4. lofting a 3D corridor between the target and entry reference sections
 
 This creates a smooth geometric solid that is still tied to the measured polygon areas.
@@ -353,27 +353,29 @@ This creates a smooth geometric solid that is still tied to the measured polygon
 1. `entry` and `target` polygons are resolved as 3D point sets
 2. each polygon is projected into its PCA plane
 3. the polygon area is computed using the shoelace formula
-4. an area-matched ellipse is fitted using the coordinate-extent ratio along the two SVD in-plane axes
-5. the ellipse is reconstructed in 3D
-6. the centroids of entry and target are linked into a corridor axis
-7. intermediate elliptical rings are interpolated between target and entry
+4. deterministic consensus and Tukey-biweight weighting identify contour outliers, which are reported explicitly
+5. nearly circular sections are regularized because their in-plane axis orientation is not identifiable
+6. target and entry frames are aligned by testing valid axis permutations and signs
+7. intermediate orientations are interpolated using quaternion SLERP; centers and semiaxes are interpolated linearly
 8. the stack of rings is triangulated into a closed 3D mesh
-9. the enclosed mesh volume is computed after translating mesh vertices to a local centroid reference for numerical stability
+9. longitudinal refinement continues until the mesh volume meets the declared convergence tolerance
+10. the enclosed mesh volume is computed after translating mesh vertices to a local centroid reference for numerical stability
 
 This yields `VOM`.
 
 ### VoA
 
-VoA is computed from the centroid-to-centroid trajectory relative to the target polygon normal.
+VoA is computed from the fitted-center trajectory relative to the normalized SVD target-plane normal.
 
 In the current code:
 
-- the target-plane normal is estimated from the target polygon
+- the target-plane normal is the normalized SVD plane normal
 - the angle between the corridor direction and that normal is computed
 - VoA is derived as a bounded angle in degrees
 
 Interpretation:
 
+- `90°` is an ideal perpendicular approach and `0°` is a worst-case tangential approach
 - orientation descriptor of the operative corridor
 - complements volume rather than replacing it
 

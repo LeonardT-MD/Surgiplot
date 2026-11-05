@@ -27,13 +27,20 @@ def best_fit_plane_pca(points: np.ndarray):
     _, _, vh = np.linalg.svd(X, full_matrices=False)
     # Right singular vectors correspond to principal axes; the smallest-variance
     # direction is the last axis and becomes the plane normal.
-    basis = vh.T  # columns
-    normal = basis[:, 2]
-    # normalize
+    raw_basis = vh.T  # columns
+    u = raw_basis[:, 0]
+    u = u / np.linalg.norm(u)
+    v = raw_basis[:, 1] - u * np.dot(raw_basis[:, 1], u)
+    v = v / np.linalg.norm(v)
+    # SVD vector signs are arbitrary. Reconstruct the third axis from the
+    # first two so every returned plane frame is an orthonormal, right-handed
+    # rotation matrix suitable for interpolation.
+    normal = np.cross(u, v)
     normal_norm = float(np.linalg.norm(normal))
     if normal_norm <= np.finfo(float).eps:
         raise ValueError("best-fit plane normal is numerically degenerate")
     normal = normal / normal_norm
+    basis = np.column_stack([u, v, normal])
     return c, normal, basis
 
 

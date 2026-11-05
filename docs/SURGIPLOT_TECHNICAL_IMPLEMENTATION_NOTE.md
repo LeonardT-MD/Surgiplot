@@ -48,9 +48,9 @@ Standardized SF is not a normalization by arbitrary coefficient. It is a true ge
 
 ### 4.6 VOM / sVOM / VoA
 
-The `VOM / sVOM / VoA` family is the most model-specific part of the framework. It assumes that corridor geometry can be summarized by entry and target polygons whose areas are preserved while their cross-sections are regularized into ellipses using SVD-axis extent ratios. A capped triangulated loft is evaluated in a centroid-shifted local frame. This is an analytical design choice: it sacrifices local contour irregularity in exchange for stable corridor comparison and interpretable longitudinal geometry.
+The `VOM / sVOM / VoA` family is the most model-specific part of the framework. It assumes that corridor geometry can be summarized by entry and target polygons whose robust inlier areas are preserved while their cross-sections are regularized into direct least-squares ellipses. Near-circular fits are regularized, frame ambiguity is resolved before quaternion SLERP, and a convergence-refined capped loft is evaluated in a centroid-shifted local frame. This is an analytical design choice: it sacrifices local contour irregularity in exchange for stable corridor comparison and interpretable longitudinal geometry.
 
-The `VoA` implementation was explicitly corrected so that angle-to-plane is derived from the acute angle to the target normal. Without that correction, opposite normal orientations could generate misleading zero-degree values even in clearly oblique anatomical scenarios.
+The `VoA` implementation derives angle-to-plane from the acute angle to the normalized SVD target normal. A perpendicular approach is ideal (`90°`) and a tangential approach is worst (`0°`); normal sign therefore cannot invert the interpretation.
 
 ## 5. Why the shared landmark dataset matters
 

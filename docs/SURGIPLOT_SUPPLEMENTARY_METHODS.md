@@ -61,7 +61,7 @@ The debug payload retains ordered labels, point-role order, warnings, pivot, ori
 
 #### 4.6 VOM / sVOM / VoA
 
-`VOM_VOA` replaces the entry and target polygons with area-matched ellipses constructed on the SVD best-fit plane of each polygon. Ellipse aspect ratio is derived from coordinate extents along the in-plane SVD axes. This preserves measured polygon area while imposing an analytically stable cross-sectional geometry. The corridor volume is modeled as a capped, triangulated loft between target and entry sections and evaluated in a centroid-shifted local frame. The standardized distal component (`sVOM`) is defined by a cut ellipse at a protocol-defined distance from the target.
+`VOM_VOA` projects the entry and target polygons onto right-handed SVD best-fit planes. Ellipse-specific direct least-squares fitting is combined with deterministic consensus initialization, Tukey-biweight outlier handling, exact inlier-polygon area matching, and near-circle regularization. Target and entry frames are aligned by testing axis permutations and signs, after which orientation is interpolated with quaternion SLERP. The corridor is represented by a capped triangulated loft whose longitudinal resolution is refined until volume convergence rather than fixed to an arbitrary ring count. Angular resolution is selected from a declared ellipse-polygon area error bound. Volume is evaluated in a centroid-shifted local frame. The standardized distal component (`sVOM`) is defined by a cut at a protocol-defined distance from the target, and it reuses the VOM mesh when the cut spans the full corridor.
 
 The implementation also derives:
 
@@ -72,7 +72,7 @@ The implementation also derives:
 - distal cut ellipse area
 - target distance
 
-`VoA` is computed from the corridor vector relative to the target plane by first reducing the direction-to-normal relation to the acute case.
+`VoA` is computed from the corridor vector and normalized SVD target-plane normal by first reducing the direction-to-normal relation to the acute case. A perpendicular approach is ideal (`90°`); a tangential approach is worst (`0°`). VoA is not used to scale the physical loft volume.
 
 ### 5. Desktop GUI and 3D scene workflow
 

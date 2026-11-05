@@ -274,12 +274,12 @@ Method summary:
 
 1. fit best-fit planes to entry and target polygons
 2. compute polygon areas
-3. fit area-matched ellipses using the SVD-axis extent ratio
-4. connect the ellipses to form a frustum-like corridor shell
-5. compute full corridor volume from a capped triangulated loft in a centroid-shifted local numerical frame
+3. robustly fit direct least-squares ellipses with outlier handling, near-circle regularization, and exact polygon-area matching
+4. align entry and target frames and interpolate orientation with quaternion SLERP
+5. compute full corridor volume from a convergence-refined capped triangulated loft in a centroid-shifted local numerical frame
 6. define a distal cut ellipse at standard distance for `sVOM`
 7. compute the distal truncated volume
-8. compute `VoA` from corridor direction relative to the target plane
+8. compute `VoA` from corridor direction relative to the normalized SVD target-plane normal (`90°` perpendicular/ideal; `0°` tangential/worst)
 
 Caveats:
 

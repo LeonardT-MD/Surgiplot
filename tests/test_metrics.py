@@ -129,6 +129,9 @@ def test_vom_voa_known_parallel_corridor_and_translation_invariance() -> None:
     assert translated.voa_deg == pytest.approx(baseline.voa_deg, abs=1e-10)
     assert translated.vom_mm3 == pytest.approx(baseline.vom_mm3, rel=1e-10, abs=1e-9)
     assert translated.svom_mm3 == pytest.approx(baseline.svom_mm3, rel=1e-10, abs=1e-9)
+    assert baseline.debug is not None
+    assert baseline.debug["method_version"] == "3d-loft-2.0"
+    assert baseline.debug["ellipse_polygon_max_relative_area_error"] == pytest.approx(1e-4)
 
 
 def test_vom_reports_standard_distance_clipping() -> None:
@@ -138,6 +141,49 @@ def test_vom_reports_standard_distance_clipping() -> None:
     assert result.debug["requested_stand_dist_mm"] == pytest.approx(20.0)
     assert result.debug["stand_dist_mm"] == pytest.approx(10.0)
     assert result.debug["stand_dist_clipped_to_corridor"] is True
+    assert result.debug["svom_longitudinal_convergence"]["reused_full_vom_mesh"] is True
+
+
+def test_voa_convention_is_ideal_perpendicular_and_worst_tangential() -> None:
+    perpendicular = VOM_VOA(entry=_square(10.0), target=_square(0.0))
+    tangential = VOM_VOA(entry=_square(0.0) + np.asarray([10.0, 0.0, 0.0]), target=_square(0.0))
+    assert perpendicular.voa_deg == pytest.approx(90.0, abs=1e-10)
+    assert tangential.voa_deg == pytest.approx(0.0, abs=1e-10)
+
+
+def test_vom_direct_ellipse_fit_rejects_single_contour_outlier() -> None:
+    theta = np.linspace(0.0, 2.0 * np.pi, 16, endpoint=False)
+    target = np.column_stack([2.0 * np.cos(theta), np.sin(theta), np.zeros_like(theta)])
+    entry = target + np.asarray([0.0, 0.0, 10.0])
+    contaminated = target.copy()
+    contaminated[3, :2] = [20.0, 20.0]
+
+    result = VOM_VOA(entry=entry, target=contaminated, return_debug=True)
+    assert result.debug is not None
+    assert result.debug["target_ellipse_fit_method"] == "direct_least_squares_tukey_irls"
+    assert result.debug["target_ellipse_fit_outlier_indices"] == [3]
+    assert result.debug["target_polygon_area_mm2"] == pytest.approx(6.0646748343, rel=1e-9)
+    assert result.debug["target_raw_polygon_area_mm2"] > 20.0
+
+
+def test_vom_is_invariant_to_contour_start_and_direction_after_frame_alignment() -> None:
+    theta = np.linspace(0.0, 2.0 * np.pi, 16, endpoint=False)
+    target = np.column_stack([3.0 * np.cos(theta), np.sin(theta), np.zeros_like(theta)])
+    angle = np.radians(55.0)
+    rotation = np.asarray(
+        [[1.0, 0.0, 0.0], [0.0, np.cos(angle), -np.sin(angle)], [0.0, np.sin(angle), np.cos(angle)]]
+    )
+    entry = target @ rotation.T + np.asarray([1.0, 2.0, 10.0])
+
+    baseline = VOM_VOA(entry=entry, target=target, stand_dist=5.0, return_debug=True)
+    reordered = VOM_VOA(entry=entry[::-1], target=np.roll(target, 5, axis=0), stand_dist=5.0, return_debug=True)
+    assert reordered.voa_deg == pytest.approx(baseline.voa_deg, abs=1e-10)
+    assert reordered.vom_mm3 == pytest.approx(baseline.vom_mm3, rel=1e-10, abs=1e-9)
+    assert reordered.svom_mm3 == pytest.approx(baseline.svom_mm3, rel=1e-10, abs=1e-9)
+    assert baseline.debug is not None
+    assert baseline.debug["orientation_interpolation"] == "aligned_quaternion_slerp"
+    assert baseline.debug["target_normal_method"] == "normalized_svd_plane_normal"
+    assert baseline.debug["vom_longitudinal_convergence"]["converged"] is True
 
 
 def test_vom_rejects_degenerate_polygon() -> None:

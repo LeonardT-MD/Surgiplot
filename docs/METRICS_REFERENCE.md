@@ -2,7 +2,7 @@
 
 ## 1. Scope and notation
 
-This document defines the version `0.2.0` software contract. It describes what the code computes, independently of how a historical study may have implemented a similarly named construct.
+This document defines the version `0.3.0` software contract. It describes what the code computes, independently of how a historical study may have implemented a similarly named construct.
 
 Notation:
 
@@ -259,31 +259,22 @@ Before `0.2.0`, fewer than four entry points triggered a generic centroid fallba
 
 Both polygons must have finite, distinct, non-collinear vertices and nonzero shoelace area after projection.
 
-### 9.1 Area-matched cross-sections
+### 9.1 Robust area-constrained ellipse cross-sections
 
-Each polygon is projected to its own SVD plane. Let its polygon area be \(A_p\). Along the two in-plane SVD axes, the implementation calculates coordinate extents:
+Each polygon is projected to its own right-handed SVD plane. With five or more points, Surgiplot fits an ellipse-specific conic using the numerically scaled direct least-squares method of Fitzgibbon, Pilu, and Fisher, implemented using the stable block decomposition described by Halíř and Flusser. Tukey-biweight iteratively reweighted least squares is initialized by deterministic five-point consensus fits. Points outside the robust residual threshold are reported explicitly and are excluded from the ordered inlier polygon used for area matching. Three- or four-point contours retain the deterministic SVD-extent fallback.
 
-\[
-s_x=\max_i|x_i|,\qquad s_y=\max_i|y_i|
-\]
-
-Degenerate extents fall back to standard deviation and finally to `1.0`. A uniform factor is chosen:
+Let the robust direct fit return provisional semiaxes \(\hat a,\hat b\), and let \(A_p\) be the ordered inlier-polygon area. A single area-constraint scale is applied:
 
 \[
-k=\sqrt{\frac{A_p}{\pi s_xs_y}}
+k=\sqrt{\frac{A_p}{\pi\hat a\hat b}},\qquad
+a=k\hat a,\qquad b=k\hat b
 \]
 
-Ellipse semiaxes are:
-
-\[
-a=ks_x,\qquad b=ks_y
-\]
-
-Therefore the analytical ellipse area is \(\pi ab=A_p\), subject to floating-point precision.
+Therefore \(\pi ab=A_p\) while the robust fitted aspect ratio is preserved. If \(\max(a,b)/\min(a,b)\leq1.05\), the section is regularized to a circle of radius \(\sqrt{A_p/\pi}\), because the major-axis direction of a nearly circular fit is not identifiable.
 
 ### 9.2 Corridor axis and target distance
 
-Let \(c_E\) and \(c_T\) be entry and target centroids:
+Let \(c_E\) and \(c_T\) be the fitted ellipse centers:
 
 \[
 v=c_T-c_E,\qquad H=\|v\|_2
@@ -293,7 +284,7 @@ Identical centroids fail because no trajectory is defined.
 
 ### 9.3 VoA
 
-The target normal \(n_T\) is computed from ordered target edges around the target centroid. A best-fit-plane normal is used if the accumulated edge normal is numerically degenerate.
+The target normal \(n_T\) is the normalized SVD best-fit-plane normal. Its arbitrary sign is removed by taking the acute trajectory-normal angle.
 
 First:
 
@@ -315,15 +306,19 @@ The angle to the target plane is:
 
 The result is bounded to `[0°, 90°]`.
 
+This convention defines an approach perpendicular to the target plane as ideal (`VoA = 90°`) and a tangential approach as worst (`VoA = 0°`). VoA is reported separately and does not multiply the geometric volume.
+
 ### 9.4 Loft construction
 
 Target-to-entry interpolation parameter \(q\in[0,1]\) controls:
 
 - center: linear interpolation;
 - semiaxes: linear interpolation;
-- in-plane basis: elementwise interpolation followed by orthonormalization.
+- orientation: quaternion spherical linear interpolation (SLERP).
 
-The full VOM uses 72 longitudinal sections. Each section contains 120 sampled ellipse points. Adjacent rings are triangulated and both ends are capped, producing a closed mesh.
+Before interpolation, target and entry normals are aligned. All valid in-plane axis permutations and sign combinations are evaluated, and the correspondence producing the smallest rotation is selected. Nearly circular sections use minimum-twist parallel transport because their in-plane major axis is not identifiable.
+
+Longitudinal resolution is not a fixed ring count. Refinement starts with 9 rings and doubles the number of intervals (`9, 17, 33, ...`) until successive closed-mesh volumes differ by no more than `1e-4` relative plus `1e-6 mm³` absolute, with a 257-ring safety limit. Angular resolution is similarly criterion-based: the smallest regular polygon whose area differs from its analytical ellipse by at most `1e-4` is used (currently 257 vertices). Adjacent rings are triangulated and both ends are capped.
 
 ### 9.5 Mesh volume and numerical frame
 
@@ -335,7 +330,7 @@ V=\left|\sum \frac{a\cdot(b\times c)}{6}\right|
 
 Before evaluation, Surgiplot subtracts the mean mesh vertex position from every triangle vertex. This local reference does not change the solid but prevents catastrophic cancellation when global coordinates are large. Translation invariance is regression-tested at million-unit offsets.
 
-The sampled polygonal ellipse introduces a small discretization error relative to the analytical ellipse area. Tests permit a relative error of `5e-4` for a simple parallel constant-section fixture.
+The debug payload records angular tolerance, selected longitudinal sections, convergence history, and whether the maximum refinement was reached.
 
 ### 9.6 sVOM
 
@@ -345,7 +340,7 @@ The effective standard distance is:
 d_s=\min(d_{requested},H)
 \]
 
-and the distal ratio is \(q_s=d_s/H\). A second closed loft from target to \(q_s\) uses 48 longitudinal sections. When the requested distance exceeds the corridor length, sVOM equals VOM.
+and the distal ratio is \(q_s=d_s/H\). A second convergence-controlled closed loft spans target to \(q_s\). When the requested distance reaches or exceeds the corridor length, the full VOM mesh and value are reused so sVOM equals VOM exactly.
 
 Debug output distinguishes:
 
@@ -359,13 +354,22 @@ Debug output distinguishes:
 - `vom_mm3`;
 - `svom_mm3`.
 
+Debug output identifies this revised formulation as method version `3d-loft-2.0`; CLI and Toolkit composite exports retain that identifier.
+
 ### Debug comparison metrics
 
 The debug payload also provides legacy polygon-frustum, ellipse-frustum, adjusted-ellipse, and supplementary tilt-weighted values. These are comparison fields, not the primary `vom_mm3` or `svom_mm3` outputs.
 
 ### Methodological interpretation
 
-The primary software outputs come from an explicit 3D loft. No separate angle-dependent multiplier is applied to the primary volume. The ellipse substitution and basis interpolation are analytical modeling choices and must be reported.
+The primary software outputs come from an explicit 3D loft. No separate angle-dependent multiplier is applied to the primary volume. Robust ellipse fitting, outlier exclusion, near-circle regularization, frame alignment, SLERP, and convergence tolerances are analytical modeling choices and must be reported.
+
+References:
+
+- Fitzgibbon AW, Pilu M, Fisher RB. Direct least square fitting of ellipses. *IEEE Transactions on Pattern Analysis and Machine Intelligence*. 1999;21(5):476-480. doi:10.1109/34.765658.
+- Halíř R, Flusser J. Numerically stable direct least squares fitting of ellipses. *WSCG*. 1998.
+- Shoemake K. Animating rotation with quaternion curves. *Computer Graphics*. 1985;19(3):245-254. doi:10.1145/325165.325242.
+- Alyassin AM, Lancaster JL, Downs JH, Fox PT. Evaluation of new algorithms for the interactive measurement of surface area and volume. *Medical Physics*. 1994;21(6):741-752. doi:10.1118/1.597333.
 
 ## 10. Composite wrappers
 

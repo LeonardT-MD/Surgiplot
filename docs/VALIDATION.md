@@ -21,7 +21,7 @@ ruff check surgiplot tests
 python -m compileall -q surgiplot tests
 ```
 
-The version `0.2.0` regression suite contains 32 tests covering metrics, transforms, data I/O, CLI behavior, vendor detection, and study statistics.
+The version `0.3.0` regression suite contains 35 tests covering metrics, transforms, data I/O, CLI behavior, vendor detection, study statistics, and the revised VOM/sVOM/VoA geometry.
 
 ## 3. Analytical metric fixtures
 
@@ -58,13 +58,16 @@ A symmetric four-cardinal fixture verifies vertical/horizontal angles and quadri
 
 ### VOM, sVOM, and VoA
 
-Parallel, constant-section polygons provide an analytical prism comparison. The modeled sampled elliptical loft is accepted within relative tolerance `5e-4`, accounting for 120-point ring discretization.
+Parallel, constant-section polygons provide an analytical prism comparison. Angular ring resolution is selected to limit regular-polygon area error to `1e-4`. Longitudinal refinement must satisfy `1e-4` relative plus `1e-6 mm³` absolute volume convergence.
 
 The suite also verifies:
 
 - rigid translation to million-unit coordinate offsets does not materially change volume;
 - standard distance larger than the corridor is clipped;
-- clipped sVOM equals full VOM;
+- clipped sVOM reuses the full VOM mesh and equals VOM exactly;
+- perpendicular and tangential approaches return `90°` and `0°` VoA, respectively;
+- contour reversal and cyclic reindexing do not change VOM after frame alignment;
+- a single gross contour outlier is identified and excluded from area-constrained ellipse fitting;
 - degenerate or coincident cross-sections fail explicitly.
 
 ## 4. I/O fixtures

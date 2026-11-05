@@ -56,13 +56,17 @@ and the area of the rescaled quadrilateral was then recomputed. Native and stand
 
 ### VOM, sVOM, and VoA
 
-The `VOM / sVOM / VoA` family modeled the operative corridor between an entry polygon and a target polygon. Each polygon was projected into its best-fit plane and replaced by an area-matched ellipse whose aspect ratio was derived from coordinate extents along the SVD in-plane axes. A closed loft was generated between target and entry ellipses to define `VOM`. A distal cut at a predefined standard distance from the target defined the standardized corridor segment (`sVOM`). Closed-mesh volume was evaluated in a centroid-shifted local numerical frame to reduce cancellation at large global coordinate offsets.
+The `VOM / sVOM / VoA` family modeled the operative corridor between an entry polygon and a target polygon. Each polygon was projected into a right-handed SVD best-fit plane. With at least five points, an ellipse-specific direct least-squares conic fit was refined with deterministic consensus initialization and Tukey-biweight iteratively reweighted least squares; detected outliers were excluded from the ordered contour used for area matching and retained in diagnostic output. Three- and four-point contours used an SVD-extent fallback. The fitted semiaxes were uniformly rescaled so that analytical ellipse area equaled robust ordered-polygon area. Fits with an axis ratio no greater than 1.05 were regularized to circles because their in-plane orientation was not identifiable.
+
+Before lofting, target and entry normals were aligned, all valid in-plane axis permutations and sign combinations were tested, and the correspondence with the smallest relative rotation was selected. Orientation was interpolated with quaternion spherical linear interpolation, while ellipse centers and semiaxes were interpolated linearly. The ring stack was refined from 9 rings by doubling interval count until successive closed-mesh volumes differed by at most `1e-4` relative plus `1e-6 mm³` absolute, subject to a 257-ring limit. Angular sampling was selected from a `1e-4` analytical ellipse-to-inscribed-polygon area-error bound. A capped loft defined `VOM`; a target-originating cut at a predefined standard distance defined `sVOM`. When the standard distance covered the full corridor, the VOM mesh was reused exactly. Closed-mesh volume was evaluated in a centroid-shifted local numerical frame to reduce cancellation at large global coordinate offsets.
 
 `VoA` was computed from the corridor direction relative to the target plane. Specifically, the acute angle between the corridor vector and the target-plane normal was computed first, and the angle to the plane was then defined as:
 
 \[
 \mathrm{VoA} = 90^\circ - \theta_{\text{acute to target normal}}
 \]
+
+The normalized SVD target-plane normal was used. Under this convention, a perpendicular approach was ideal (`90°`) and a tangential approach was worst (`0°`). VoA was not used as a multiplier of the physical loft volume.
 
 The following outputs were retained from this family: `VoA_deg`, `VOM_mm3`, `sVOM_mm3`, `target_distance_mm`, `entry_polygon_area_mm2`, `target_polygon_area_mm2`, `entry_ellipse_area_mm2`, `target_ellipse_area_mm2`, and `svom_cut_ellipse_area_mm2`.
 

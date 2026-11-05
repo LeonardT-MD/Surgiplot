@@ -47,7 +47,7 @@ Use an isolated environment so Surgiplot does not change unrelated Python softwa
 python3 -m venv surgiplot-env
 source surgiplot-env/bin/activate
 python -m pip install --upgrade pip
-python -m pip install "https://github.com/LeonardT-MD/Surgiplot/releases/download/v0.2.0/surgiplot-0.2.0-py3-none-any.whl"
+python -m pip install "surgiplot @ https://github.com/LeonardT-MD/Surgiplot/archive/refs/heads/main.zip"
 ```
 
 ### 3.2 Windows PowerShell
@@ -56,7 +56,7 @@ python -m pip install "https://github.com/LeonardT-MD/Surgiplot/releases/downloa
 py -3.11 -m venv surgiplot-env
 .\surgiplot-env\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install "https://github.com/LeonardT-MD/Surgiplot/releases/download/v0.2.0/surgiplot-0.2.0-py3-none-any.whl"
+python -m pip install "surgiplot @ https://github.com/LeonardT-MD/Surgiplot/archive/refs/heads/main.zip"
 ```
 
 If local PowerShell policy prevents activation, invoke the environment interpreter directly instead of weakening machine-wide security controls:
@@ -67,7 +67,7 @@ If local PowerShell policy prevents activation, invoke the environment interpret
 
 ### 3.3 Install the desktop GUI
 
-The release wheel installs the core and CLI. To install an optional interface profile from the source checkout:
+The default installation provides the core and CLI. To install an optional interface profile from the source checkout:
 
 ```bash
 git clone https://github.com/LeonardT-MD/Surgiplot.git
@@ -91,7 +91,7 @@ surgiplot --help
 python -c "import surgiplot; print(surgiplot.__version__)"
 ```
 
-The expected release version is `0.2.0`. If the shell cannot find `surgiplot`, confirm that `surgiplot-env` is active or use:
+The expected source version is `0.3.0`. If the shell cannot find `surgiplot`, confirm that `surgiplot-env` is active or use:
 
 ```bash
 python -m surgiplot.cli.app --help
@@ -312,9 +312,10 @@ Expected result, within ordinary floating-point tolerance:
 
 ```json
 {
-  "VOM_mm3": 519.7624309792972,
+  "VOM_mm3": 519.9481996607416,
   "VoA_deg": 90.0,
-  "sVOM_mm3": 154.92918615729863
+  "method_version": "3d-loft-2.0",
+  "sVOM_mm3": 154.98455951425953
 }
 ```
 
@@ -375,7 +376,7 @@ surgiplot dataset summary navigation-export.txt \
   --navigation-format auto
 ```
 
-Supported automatic vendor paths currently include Stryker text and Medtronic JSON. Brainlab is reserved but not implemented in `0.2.0`.
+Supported automatic vendor paths currently include Stryker text and Medtronic JSON. Brainlab is reserved but not implemented in `0.3.0`.
 
 ## 8. Desktop GUI walkthrough
 

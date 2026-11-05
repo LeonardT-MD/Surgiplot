@@ -154,7 +154,7 @@ They also support names resolved through `data`:
 result = sp.DISTANCE_3D(data=dataset, A="entry", B="target")
 ```
 
-Several signatures retain `space` and `transforms` compatibility fields. Version `0.2.0` records `space` in debug output where applicable but does not automatically apply `transforms`. Normalize coordinates before calling a metric.
+Several signatures retain `space` and `transforms` compatibility fields. Version `0.3.0` records `space` in debug output where applicable but does not automatically apply `transforms`. Normalize coordinates before calling a metric.
 
 ## 5. Result objects
 

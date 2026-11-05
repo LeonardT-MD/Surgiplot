@@ -140,7 +140,7 @@ surgiplot --help
 python -c "import surgiplot; print(surgiplot.__version__)"
 ```
 
-Expected version for this release line: `0.2.0`.
+Expected version for this source line: `0.3.0`.
 
 Developers should additionally run:
 

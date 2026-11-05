@@ -4,6 +4,22 @@ All notable changes to Surgiplot are documented here. The project is pre-1.0; va
 
 ## Unreleased
 
+## 0.3.0 — 2026-11-05
+
+### Corrected
+
+- defined VoA as the acute angle between the operative axis and the target plane, so a perpendicular approach is 90 degrees and a tangential approach is 0 degrees;
+- replaced extent-based ellipse estimates with robust direct least-squares ellipse fitting, explicit outlier rejection, polygon-area preservation, and near-circular regularization;
+- constructed normalized right-handed SVD plane frames and aligned entry/target frames by the minimum valid rotation over axis permutations and signs;
+- interpolated section orientation with quaternion SLERP and removed the fixed 72-section longitudinal discretization;
+- refined the loft until a documented volume-convergence tolerance is reached and computed closed-mesh volume using local-frame signed tetrahedra;
+- made the 3D Slicer Toolkit load its bundled, synchronized Surgiplot backend deterministically instead of allowing an older installed package to take precedence.
+
+### Added
+
+- method-version, convergence, section-count, plane-normal, frame-alignment, and contour-outlier diagnostics for VOM/sVOM/VoA;
+- regression coverage for VoA endpoints, contour ordering, outlier handling, converged lofting, and full-corridor sVOM identity.
+
 ### Licensing
 
 - changed the current source tree from the MIT License to the PolyForm Noncommercial License 1.0.0; previously published releases remain governed by the license distributed with those releases.
